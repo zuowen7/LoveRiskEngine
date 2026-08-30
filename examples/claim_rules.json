@@ -1,0 +1,14 @@
+[
+  {
+    "attribute": "relationship_status",
+    "pattern": "\\b(?:he|she|they) (?:is|was) (single|married|in a relationship|taken)\\b"
+  },
+  {
+    "attribute": "job",
+    "pattern": "\\bworks (?:as|at) (?:a |an )?([A-Za-z]+)\\b"
+  },
+  {
+    "attribute": "city",
+    "pattern": "\\blives (?:in|near) ([A-Z][a-z]+)\\b"
+  }
+]
