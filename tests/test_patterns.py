@@ -11,10 +11,15 @@ from love_risk_engine.core.signals import SignalType
 
 def _obs(idx, signal=SignalType.UNSPECIFIED):
     return Observation(
-        id=f"O{idx:03d}", relationship_id="R001",
+        id=f"O{idx:03d}",
+        relationship_id="R001",
         timestamp=f"2026-01-{idx:02d}T10:00:00",
-        category="x", observation="o", interpretation="i",
-        alternative_explanation="a", source="self", confidence=5.0,
+        category="x",
+        observation="o",
+        interpretation="i",
+        alternative_explanation="a",
+        source="self",
+        confidence=5.0,
         signal_type=signal,
     )
 

@@ -11,9 +11,8 @@ Design constraints (honest, no pseudoscience):
     the other person a manipulator. The user always decides.
   - Thresholds are explicitly documented as uncalibrated placeholders.
 """
-from __future__ import annotations
 
-from typing import List, Optional
+from __future__ import annotations
 
 from .bias_detector import BiasFinding
 from .observation import Observation
@@ -26,15 +25,17 @@ from .signals import SignalType
 # opening phase of the relationship. The *pairing* matters — cheap talk alone
 # is just enthusiasm; cheap talk + costly gestures early is the manipulation
 # precursor.
-EARLY_WINDOW_OBSERVATIONS = 10   # the "early phase" is the first N observations
-MIN_CHEAP_FOR_LOVE_BOMBING = 3   # >= this many CHEAP signals in the window
-MIN_COSTLY_FOR_LOVE_BOMBING = 1  # >= this many COSTLY signals paired with the cheap talk
-MIN_TOTAL_SIGNALS = 5            # cheap + costly combined in the window
+EARLY_WINDOW_OBSERVATIONS = 10  # the "early phase" is the first N observations
+MIN_CHEAP_FOR_LOVE_BOMBING = 3  # >= this many CHEAP signals in the window
+MIN_COSTLY_FOR_LOVE_BOMBING = (
+    1  # >= this many COSTLY signals paired with the cheap talk
+)
+MIN_TOTAL_SIGNALS = 5  # cheap + costly combined in the window
 
 
 def detect_love_bombing(
-    observations: List[Observation],
-) -> Optional[BiasFinding]:
+    observations: list[Observation],
+) -> BiasFinding | None:
     """Flag a possible love-bombing pattern in the early relationship window.
 
     Looks at the first `EARLY_WINDOW_OBSERVATIONS` observations (by timestamp).

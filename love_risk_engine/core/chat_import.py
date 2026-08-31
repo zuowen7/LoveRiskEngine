@@ -21,18 +21,16 @@ Claim rules file (JSON list):
     "pattern": "\\b(?:he|she|they) (?:is|was) (single|married|in a relationship)\\b"}]
 The `pattern` must contain exactly one capturing group, which yields the value.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass
-from typing import List
 
 from .observation import Claim, Observation
 
-_DELIM_RE = re.compile(
-    r"^(?P<ts>[^|]+)\s*\|\s*(?P<sp>[^|]+)\s*\|\s*(?P<tx>.*)$"
-)
+_DELIM_RE = re.compile(r"^(?P<ts>[^|]+)\s*\|\s*(?P<sp>[^|]+)\s*\|\s*(?P<tx>.*)$")
 
 
 @dataclass
@@ -47,13 +45,13 @@ class ClaimRule:
     attribute: str
     pattern: str
 
-    def compiled(self) -> "re.Pattern[str]":
+    def compiled(self) -> re.Pattern[str]:
         return re.compile(self.pattern, re.IGNORECASE)
 
 
-def parse_ndjson(path: str) -> List[ChatMessage]:
-    messages: List[ChatMessage] = []
-    with open(path, "r", encoding="utf-8") as fh:
+def parse_ndjson(path: str) -> list[ChatMessage]:
+    messages: list[ChatMessage] = []
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -69,9 +67,9 @@ def parse_ndjson(path: str) -> List[ChatMessage]:
     return messages
 
 
-def parse_delimited(path: str) -> List[ChatMessage]:
-    messages: List[ChatMessage] = []
-    with open(path, "r", encoding="utf-8") as fh:
+def parse_delimited(path: str) -> list[ChatMessage]:
+    messages: list[ChatMessage] = []
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.rstrip("\n")
             if not line.strip():
@@ -89,9 +87,9 @@ def parse_delimited(path: str) -> List[ChatMessage]:
     return messages
 
 
-def parse_file(path: str) -> List[ChatMessage]:
+def parse_file(path: str) -> list[ChatMessage]:
     """Auto-detect NDJSON vs delimited format from the first non-empty line."""
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             s = line.strip()
             if not s:
@@ -102,10 +100,10 @@ def parse_file(path: str) -> List[ChatMessage]:
     return []
 
 
-def load_claim_rules(path: str) -> List[ClaimRule]:
-    with open(path, "r", encoding="utf-8") as fh:
+def load_claim_rules(path: str) -> list[ClaimRule]:
+    with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
-    rules: List[ClaimRule] = []
+    rules: list[ClaimRule] = []
     for item in raw:
         attr = item.get("attribute")
         pat = item.get("pattern")
@@ -115,8 +113,8 @@ def load_claim_rules(path: str) -> List[ClaimRule]:
     return rules
 
 
-def extract_claims(text: str, rules: List[ClaimRule]) -> List[Claim]:
-    claims: List[Claim] = []
+def extract_claims(text: str, rules: list[ClaimRule]) -> list[Claim]:
+    claims: list[Claim] = []
     for rule in rules:
         m = rule.compiled().search(text)
         if m and m.lastindex and m.lastindex >= 1:
@@ -127,12 +125,12 @@ def extract_claims(text: str, rules: List[ClaimRule]) -> List[Claim]:
 
 
 def to_observations(
-    messages: List[ChatMessage],
-    rules: List[ClaimRule],
+    messages: list[ChatMessage],
+    rules: list[ClaimRule],
     relationship_id: str,
     category: str = "chat",
-) -> List[Observation]:
-    observations: List[Observation] = []
+) -> list[Observation]:
+    observations: list[Observation] = []
     for msg in messages:
         claims = extract_claims(msg.text, rules)
         observations.append(

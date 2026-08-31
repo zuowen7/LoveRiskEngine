@@ -4,15 +4,16 @@ Design principle #1 (Attraction != Trust):
   attraction and trust are stored and mutated independently. Nothing in this
   module ever derives trust from attraction (or vice versa).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 MAX_SCORE = 10.0
 
 
-class EmotionalState(str, Enum):
+class EmotionalState(StrEnum):
     """Self-reported emotional state of the user at assessment time.
 
     `is_high` flags states that impair judgement during major decisions.

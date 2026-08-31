@@ -7,10 +7,10 @@ Design principle #2 (Observation != Interpretation):
     alternative_explanation   - at least one other plausible reading
   `confidence` and `source` make the evidence quality explicit.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
 
 from .signals import SignalType
 
@@ -41,7 +41,7 @@ class Observation:
     confidence: float  # 0..10
     rationalization: bool = False
     inconsistency_flag: bool = False
-    claims: List[Claim] = field(default_factory=list)
+    claims: list[Claim] = field(default_factory=list)
     signal_type: SignalType = SignalType.UNSPECIFIED
 
 

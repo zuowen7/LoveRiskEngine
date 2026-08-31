@@ -7,7 +7,7 @@ def test_init_creates_tables(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.init()
     db.add_relationship("Alex")
-    assert db.list_relationships()[0]["alias"] == "Alex"
+    assert db.list_relationships()[0].alias == "Alex"
     db.close()
 
 
@@ -25,8 +25,8 @@ def test_get_relationship_by_id_and_alias(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.init()
     rid = db.add_relationship("Alex")
-    assert db.get_relationship("R001")["id"] == rid
-    assert db.get_relationship("Alex")["id"] == rid
+    assert db.get_relationship("R001").id == rid
+    assert db.get_relationship("Alex").id == rid
     assert db.get_relationship("nope") is None
     db.close()
 
@@ -36,8 +36,14 @@ def test_observation_roundtrip(tmp_path):
     db.init()
     rid = db.add_relationship("Alex")
     oid = db.add_observation(
-        rid, "honesty", "cancelled plans", "losing interest",
-        "work deadline", "self", 4.0, rationalization=True,
+        rid,
+        "honesty",
+        "cancelled plans",
+        "losing interest",
+        "work deadline",
+        "self",
+        4.0,
+        rationalization=True,
         inconsistency_flag=True,
     )
     obs = db.get_observations(rid)
@@ -52,8 +58,15 @@ def test_state_clamp_and_upsert(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.init()
     rid = db.add_relationship("Alex")
-    db.upsert_state(RelationshipState(rid, attraction=99, trust=-5, uncertainty=3,
-                                      emotional_state=EmotionalState.ANXIOUS))
+    db.upsert_state(
+        RelationshipState(
+            rid,
+            attraction=99,
+            trust=-5,
+            uncertainty=3,
+            emotional_state=EmotionalState.ANXIOUS,
+        )
+    )
     st = db.get_state(rid)
     assert st.attraction == 10.0
     assert st.trust == 0.0
@@ -91,5 +104,6 @@ def test_boundary_hit_requires_evidence(tmp_path):
     hid = db.add_boundary_hit(bid, rid, "they mocked my boundary on call")
     hits = db.list_boundary_hits(rid, only_hard=True)
     assert len(hits) == 1
-    assert hits[0]["id"] == hid
+    assert hits[0].id == hid
+    assert hits[0].evidence == "they mocked my boundary on call"
     db.close()

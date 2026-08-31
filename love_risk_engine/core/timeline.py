@@ -10,31 +10,37 @@ events that carry an explicit timestamp. Tracking state/exposure deltas is a
 separate roadmap item (it would need an event log); for now, this view is the
 "event log" of what happened, not a continuous trace of every score.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import TYPE_CHECKING
 
 from .observation import Observation
 from .signals import SignalType
+
+if TYPE_CHECKING:
+    from .boundaries import BoundaryHit
+    from .inconsistency import Inconsistency
+    from .review import Review
 
 
 @dataclass
 class TimelineEvent:
     timestamp: str
-    kind: str          # observation | boundary_hit | inconsistency | review
-    label: str         # one-line human-readable summary
-    detail: str = ""   # optional second line (claims, resolution, etc.)
+    kind: str  # observation | boundary_hit | inconsistency | review
+    label: str  # one-line human-readable summary
+    detail: str = ""  # optional second line (claims, resolution, etc.)
 
 
 def build_timeline(
-    observations: List[Observation],
-    boundary_hits: List,
-    inconsistencies: List,
-    reviews: List,
-) -> List[TimelineEvent]:
+    observations: list[Observation],
+    boundary_hits: list[BoundaryHit],
+    inconsistencies: list[Inconsistency],
+    reviews: list[Review],
+) -> list[TimelineEvent]:
     """Merge all timestamped events into one chronologically-sorted stream."""
-    events: List[TimelineEvent] = []
+    events: list[TimelineEvent] = []
 
     for o in observations:
         sig = ""
@@ -60,51 +66,47 @@ def build_timeline(
                 label=f"{o.id} {o.category}{sig}{flag_str}: {o.observation}",
                 detail=(
                     f"interp: {o.interpretation}"
-                    + (f" | alt: {o.alternative_explanation}"
-                       if o.alternative_explanation else "")
+                    + (
+                        f" | alt: {o.alternative_explanation}"
+                        if o.alternative_explanation
+                        else ""
+                    )
                     + claims_str
                 ).strip(" |"),
             )
         )
 
     for h in boundary_hits:
-        ts = h["timestamp"] if "timestamp" in h.keys() else ""
         events.append(
             TimelineEvent(
-                timestamp=ts,
+                timestamp=h.timestamp,
                 kind="boundary_hit",
-                label=f"{h['id']} BOUNDARY HIT ({h['boundary_id']}): {h['evidence']}",
+                label=f"{h.id} BOUNDARY HIT ({h.boundary_id}): {h.evidence}",
             )
         )
 
     for i in inconsistencies:
-        ts = i["created_at"] if "created_at" in i.keys() else ""
-        kind_tag = i["kind"] if "kind" in i.keys() else "manual"
-        status = "resolved" if i["resolved"] else "open"
-        resolution = i["resolution"] if "resolution" in i.keys() and i["resolution"] else ""
-        note = i["resolution_note"] if "resolution_note" in i.keys() else ""
-        detail = f"[{kind_tag}] {status}"
-        if resolution:
-            detail += f" -> {resolution}"
-        if note:
-            detail += f" | {note}"
+        detail = f"[{i.kind}] {'resolved' if i.resolved else 'open'}"
+        if i.resolution:
+            detail += f" -> {i.resolution}"
+        if i.resolution_note:
+            detail += f" | {i.resolution_note}"
         events.append(
             TimelineEvent(
-                timestamp=ts,
+                timestamp=i.created_at,
                 kind="inconsistency",
-                label=f"{i['id']} INCONSISTENCY: {i['description']}",
+                label=f"{i.id} INCONSISTENCY: {i.description}",
                 detail=detail,
             )
         )
 
     for r in reviews:
-        ts = r["timestamp"] if "timestamp" in r.keys() else ""
         events.append(
             TimelineEvent(
-                timestamp=ts,
+                timestamp=r.timestamp,
                 kind="review",
-                label=f"{r['id']} REVIEW -> {r['recommendation']}",
-                detail=r["notes"] if "notes" in r.keys() else "",
+                label=f"{r.id} REVIEW -> {r.recommendation}",
+                detail=r.notes,
             )
         )
 
@@ -113,10 +115,10 @@ def build_timeline(
     return events
 
 
-def format_timeline(events: List[TimelineEvent]) -> str:
+def format_timeline(events: list[TimelineEvent]) -> str:
     if not events:
         return "(no timestamped events yet)"
-    lines: List[str] = []
+    lines: list[str] = []
     last_ts = ""
     for e in events:
         ts = e.timestamp or "?"

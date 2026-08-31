@@ -1,14 +1,23 @@
-from love_risk_engine.core.evidence import EvidenceSupport, compute_evidence_support
+from love_risk_engine.core.evidence import compute_evidence_support
 from love_risk_engine.core.observation import Claim, Observation
 from love_risk_engine.core.signals import SignalType
 
 
-def _obs(alt="", source="self", claims=None, confidence=5.0, signal=SignalType.UNSPECIFIED):
+def _obs(
+    alt="", source="self", claims=None, confidence=5.0, signal=SignalType.UNSPECIFIED
+):
     return Observation(
-        id="O1", relationship_id="R001", timestamp="2026-01-01T00:00:00",
-        category="x", observation="o", interpretation="i",
-        alternative_explanation=alt, source=source, confidence=confidence,
-        claims=claims or [], signal_type=signal,
+        id="O1",
+        relationship_id="R001",
+        timestamp="2026-01-01T00:00:00",
+        category="x",
+        observation="o",
+        interpretation="i",
+        alternative_explanation=alt,
+        source=source,
+        confidence=confidence,
+        claims=claims or [],
+        signal_type=signal,
     )
 
 
@@ -32,15 +41,19 @@ def test_costly_signal_weighs_more_than_cheap():
     cheap = compute_evidence_support([_obs(signal=SignalType.CHEAP)])
     unspecified = compute_evidence_support([_obs(signal=SignalType.UNSPECIFIED)])
     # all confidence=5 -> conf_weight 1.0; base 2.0 * weight
-    assert abs(costly.support_units - 4.0) < 1e-9   # 2.0 * 2.0
-    assert abs(cheap.support_units - 1.0) < 1e-9    # 2.0 * 0.5
+    assert abs(costly.support_units - 4.0) < 1e-9  # 2.0 * 2.0
+    assert abs(cheap.support_units - 1.0) < 1e-9  # 2.0 * 0.5
     assert abs(unspecified.support_units - 2.0) < 1e-9
     assert costly.support_units > unspecified.support_units > cheap.support_units
 
 
 def test_support_rewards_rigor_and_claims_and_signals():
     obs = [
-        _obs(alt="other reading", claims=[Claim("job", "barista")], signal=SignalType.COSTLY),
+        _obs(
+            alt="other reading",
+            claims=[Claim("job", "barista")],
+            signal=SignalType.COSTLY,
+        ),
         _obs(alt="maybe neutral"),
         _obs(source="friend", alt="", claims=[Claim("city", "Berlin")]),
     ]
@@ -60,8 +73,8 @@ def test_support_rewards_rigor_and_claims_and_signals():
 
 
 def test_low_confidence_halves_contribution():
-    s_low = compute_evidence_support([_obs(confidence=0.0)])   # conf_weight 0.5
-    s_high = compute_evidence_support([_obs(confidence=10.0)]) # conf_weight 1.5
+    s_low = compute_evidence_support([_obs(confidence=0.0)])  # conf_weight 0.5
+    s_high = compute_evidence_support([_obs(confidence=10.0)])  # conf_weight 1.5
     assert s_low.support_units < s_high.support_units
     # 2.0*0.5 vs 2.0*1.5
     assert abs(s_low.support_units - 1.0) < 1e-9

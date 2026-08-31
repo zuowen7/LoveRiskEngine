@@ -3,10 +3,10 @@
 A "hook" is a check that may raise a warning. `run_hooks` returns the list of
 findings for the current relationship; the decision engine consumes it.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from .bias_detector import (
     BiasFinding,
@@ -27,14 +27,14 @@ from .state import RelationshipState
 class ReviewContext:
     state: RelationshipState
     exposure: Exposure
-    observations: List[Observation]
+    observations: list[Observation]
     inconsistency_count: int
     hard_boundary_hit: bool
     evidence_support: EvidenceSupport
 
 
-def run_hooks(ctx: ReviewContext) -> List[BiasFinding]:
-    findings: List[BiasFinding] = []
+def run_hooks(ctx: ReviewContext) -> list[BiasFinding]:
+    findings: list[BiasFinding] = []
 
     f = attraction_exceeds_trust(ctx.state, ctx.observations)
     if f:

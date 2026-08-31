@@ -17,17 +17,19 @@ def test_resolve_default_is_sequential_change(tmp_path):
     assert db.resolve_inconsistency(ids[0])
     items = db.list_inconsistencies(rid, resolved=True)
     assert len(items) == 1
-    assert items[0]["resolution"] == "sequential_change"
-    assert items[0]["resolved"] == 1
+    assert items[0].resolution == "sequential_change"
+    assert items[0].resolved is True
     db.close()
 
 
 def test_resolve_with_note_and_type(tmp_path):
     db, rid, ids = _setup(tmp_path)
-    db.resolve_inconsistency(ids[1], resolution="genuine_inconsistency", note="red flag")
+    db.resolve_inconsistency(
+        ids[1], resolution="genuine_inconsistency", note="red flag"
+    )
     items = db.list_inconsistencies(rid, resolved=True)
-    assert items[0]["resolution"] == "genuine_inconsistency"
-    assert items[0]["resolution_note"] == "red flag"
+    assert items[0].resolution == "genuine_inconsistency"
+    assert items[0].resolution_note == "red flag"
     db.close()
 
 
@@ -46,7 +48,7 @@ def test_acknowledged_lists_all_resolved(tmp_path):
     db.resolve_inconsistency(ids[2], "dismissed")
     ack = db.acknowledged_inconsistencies(rid)
     assert len(ack) == 3
-    resolutions = {row["resolution"] for row in ack}
+    resolutions = {i.resolution for i in ack}
     assert resolutions == {"sequential_change", "genuine_inconsistency", "dismissed"}
     db.close()
 

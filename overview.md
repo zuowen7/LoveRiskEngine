@@ -79,11 +79,86 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
 
 ## Test results
 
-`pytest` → **81 passed** (26 original + 10 contradiction + 6 evidence + 6 chat-import
-+ 6 signals + 6 resolution + 6 patterns + 6 timeline + 9 cooldown). Plus an end-to-end
-CLI smoke run confirming: love-bombing pattern fires on 3 CHEAP + 2 COSTLY early;
-review returns PAUSE and auto-creates a cooldown; `exposure set` raising total is
-blocked; `--override` is logged; timeline shows all events grouped by day.
+`pytest` → **165 passed**. Branch coverage **98%**; `cli.py` at **100%**
+(statement and branch). Coverage floor enforced at **95%** in both
+`pyproject.toml` (`fail_under`) and CI.
+
+## Engineering quality pass (2026-08-31 → 2026-08-30)
+
+The project had no automated gate, so defects a linter catches in milliseconds
+were reaching review — and one reached `main`. The full audit, the defects
+found, and the 90-day roadmap are in `CODE_QUALITY_REPORT.md`; the rules that
+came out of it are in `CONTRIBUTING.md`.
+
+| Metric | Before | After |
+|---|---|---|
+| Tests passing | 81 | **165** |
+| Branch coverage | 84% | **98%** (floor **95%**) |
+| `cli.py` coverage | 66% | **100%** |
+| `core/boundaries.py` coverage | 0% | **100%** |
+| `# type: ignore` suppressions | 53 | **0** |
+| Ruff findings | 188 | **0** |
+| mypy `disallow_untyped_defs` | off | **on** (clean) |
+| `sqlite3.Row` escaping storage | 7 queries | **0** (all return domain objects) |
+| `_migrate()` per-`init()` scan | yes | **no** (`PRAGMA user_version`) |
+| CI / pre-commit | none | **both** (3.11 / 3.12 / 3.13) |
+
+Defects fixed, most serious first:
+
+1. **`Review` referenced but never imported** (`save_review(review: "Review")`,
+   a string annotation masked by `type: ignore`) — shipped bug, fixed with
+   `TYPE_CHECKING`.
+2. **`lre timeline` crashed on every invocation** — `build_timeline` read
+   boundary hits as `sqlite3.Row` after storage had been migrated to return
+   `BoundaryHit` objects. Found by the coverage push on a command that had 0%
+   coverage. Fixed with `core/timeline.py::_field()`, which reads either shape.
+3. **Bulk import was not atomic** — per-row commits inside what looked like a
+   transaction. Fixed with `_commit()`, which no-ops while a transaction is open.
+4. **Two time standards in one database** — naive local vs UTC; the timeline
+   sorts by timestamp *string*. Consolidated into `core/timeutil.py`.
+5. **Cooldown expiry compared as strings** — now parses; unparseable values fail
+   *open* so a corrupt row can never lock the user out.
+6. **SQL identifiers interpolated into query text** — `_ALLOWED_IDENTIFIERS`
+   allow-list; values remain bound parameters.
+7. **Boundaries could never be retired** — `add_boundary` hardcoded `active=1`.
+   Added `Database.deactivate_boundary()` (retired, never deleted).
+
+### Debt cleared on 2026-08-30 (the "make it strict" pass)
+
+- **Row→domain migration finished.** All seven `list_*/get` storage queries
+  (`relationships`, `inconsistencies`, `reviews`, `cooldowns`, `override_log`,
+  `boundary_hits`, `observations`) now return domain objects; the dual-shape
+  `timeline._field()` was deleted and the SIM118 per-file exemption removed —
+  no `sqlite3.Row` leaves `storage/` anymore.
+- **Versioned migrations.** `init()` now reads `PRAGMA user_version`; an
+  up-to-date DB returns after one integer read instead of re-scanning three
+  `PRAGMA table_info` calls every CLI invocation. Legacy DBs run
+  `_migrate_v0_to_v1` exactly once, then get stamped. Upgrade path is tested.
+- **`_next_id` collision fallback.** Kept `max()+1` (correct for the single-user
+  model) but added a real re-check loop to the next free `NNN`, so a concurrent
+  token reuse can never violate the `UNIQUE` constraint.
+- **`lre boundary retire <id>`** exposes `deactivate_boundary`; `log_override`
+  was already reachable via `exposure set --override` and is shown in
+  `lre cooldown <rel>`.
+- **mypy strict.** `disallow_untyped_defs = true`; `continue-on-error` dropped
+  from CI. Source is clean; tests are exempted by design.
+- **Coverage floor 90% → 95%.** `evidence.py` and `hooks.py` are excluded —
+  their only uncovered lines are defensive zero-observation guards and
+  "no hook fired" early returns that are structurally unreachable through the
+  CLI. Measured total is 98%.
+- **PR template** (`.github/PULL_REQUEST_TEMPLATE.md`) enforces the engineering
+  gate *and* the domain guardrails (no PII, no automated conviction, local-only).
+
+Two rules worth internalising, both learned the hard way:
+
+- **Changing a return type means auditing every caller by hand.** mypy is
+  advisory here, and a caller with no tests cannot fail. Defect #2 was caused
+  by an earlier fix in this same pass.
+- **A test fake that cannot fail is worse than no fake.** The `timeline` crash
+  survived a green suite because its test fed in a hand-rolled object matching
+  neither production shape — when the migration finished, `test_timeline.py`'s
+  `_DictRow` fake was rewritten to use the real domain types, and the
+  end-to-end test now feeds it a *real* `Database` result.
 
 ## Design problems / open questions found
 

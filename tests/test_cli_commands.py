@@ -1,0 +1,790 @@
+"""Command-level tests for the `lre` CLI.
+
+These drive `main(argv)` in-process against a throwaway database in `tmp_path`
+and assert on captured stdout.
+
+Why in-process rather than subprocess: a subprocess per command would fork an
+interpreter and lose branch attribution, which defeats the purpose of this
+file. Calling `main()` directly also means a failure shows the real traceback
+instead of an opaque exit code.
+
+Coverage focus, in priority order:
+  1. The cooldown gate (`exposure set` during a cooldown) and its audited
+     override. This is the only place the CLI can refuse a user action, so a
+     regression here is a safety regression, not a cosmetic one.
+  2. Commands that had no coverage at all: boundary hit, inconsistency
+     list/resolve, contradictions, chat import, timeline, cooldown.
+  3. `format_status` branches that the happy path never reaches, because
+     `run_hooks` always returns at least one finding and therefore the
+     "no warnings" and "no hooks fired" branches are unreachable through
+     `main()`. Those are exercised as direct unit tests instead.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+import pytest
+from love_risk_engine.cli import format_status, main
+from love_risk_engine.core.contradiction import ContradictionCandidate
+from love_risk_engine.core.decision import Decision
+from love_risk_engine.core.evidence import EvidenceSupport
+from love_risk_engine.core.exposure import Exposure
+from love_risk_engine.core.state import EmotionalState, RelationshipState
+
+# ---------------------------------------------------------------------------
+# fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def db_path(tmp_path, monkeypatch):
+    """Point the CLI at a throwaway database for the duration of the test."""
+    path = tmp_path / "lre.db"
+    monkeypatch.setenv("LRE_DB_PATH", str(path))
+    return str(path)
+
+
+@pytest.fixture
+def run(db_path, capsys):
+    """Invoke the CLI and return its stdout. Fails loudly on a non-zero exit."""
+
+    def _run(*argv: str) -> str:
+        code = main(list(argv))
+        out = capsys.readouterr().out
+        assert code == 0, f"`lre {' '.join(argv)}` exited {code}"
+        return out
+
+    return _run
+
+
+@pytest.fixture
+def seeded(run):
+    """A database holding one relationship, ready for command tests."""
+    run("init")
+    run("relationship", "add", "Alex")
+    return "Alex"
+
+
+@pytest.fixture
+def cooled_down(run, seeded):
+    """A relationship with an *active* cooldown, and a known exposure baseline.
+
+    Sequence matters: exposure is pinned to time=1/emotional=1 *before* the
+    cooldown starts, so later assertions can tell "raising exposure" (blocked)
+    apart from "lowering exposure" (always allowed).
+
+    The cooldown comes from a recorded hard-boundary hit, which is the only way
+    the engine reaches EXIT (it will not invent one on its own).
+    """
+    run("exposure", "set", "Alex", "--time", "1", "--emotional", "1")
+    out = run(
+        "boundary", "add", "--description", "never shouts at me", "--severity", "HARD"
+    )
+    bid = _first_id(out, "B")
+    run(
+        "boundary",
+        "hit",
+        bid,
+        "--relationship",
+        "Alex",
+        "--evidence",
+        "shouted at me in front of friends on 2026-08-01",
+    )
+    return run("review", "Alex")
+
+
+def _first_id(out: str, prefix: str) -> str:
+    """Pull the first `PREFIX###` token out of a command's stdout."""
+    match = re.search(rf"\b{prefix}\d+\b", out)
+    assert match is not None, f"no {prefix}#### id in output:\n{out}"
+    return match.group(0)
+
+
+# ---------------------------------------------------------------------------
+# observe
+# ---------------------------------------------------------------------------
+
+
+def test_observe_rejects_claim_without_equals(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("observe", "Alex", "--observation", "x", "--claim", "relationship_status")
+    assert "must be attribute=value" in str(exc.value)
+
+
+def test_observe_rejects_claim_with_empty_attribute(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("observe", "Alex", "--observation", "x", "--claim", "=single")
+    assert "attribute is empty" in str(exc.value)
+
+
+def test_observe_records_structured_claims(run, seeded):
+    out = run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says he is single",
+        "--claim",
+        "relationship_status=single",
+        "--claim",
+        " city=Berlin ",
+    )
+    assert "with 2 claim(s)" in out
+
+
+def test_observe_uses_explicit_signal_type(run, seeded):
+    out = run(
+        "observe",
+        "Alex",
+        "--observation",
+        "showed up on time for the flight",
+        "--signal-type",
+        "COSTLY",
+    )
+    assert "[COSTLY]" in out
+
+
+def test_observe_hints_when_text_matches_one_lexicon(run, seeded):
+    out = run("observe", "Alex", "--observation", "she said i love you already")
+    assert "(hint)" in out
+    assert "CHEAP" in out
+
+
+def test_observe_stays_silent_when_markers_are_ambiguous(run, seeded):
+    """Both lexicons hit -> the heuristic abstains rather than guessing."""
+    out = run(
+        "observe",
+        "Alex",
+        "--observation",
+        "i love you, and she met my parents",
+    )
+    assert "(hint)" not in out
+
+
+# ---------------------------------------------------------------------------
+# status / format_status
+# ---------------------------------------------------------------------------
+
+
+def _empty_support() -> EvidenceSupport:
+    return EvidenceSupport(
+        observation_count=0,
+        distinct_sources=0,
+        with_alternative=0,
+        with_claims=0,
+        costly_count=0,
+        cheap_count=0,
+        support_units=0.0,
+    )
+
+
+def test_format_status_reports_no_warnings():
+    """Unreachable via `main()` — `run_hooks` always yields >=1 finding."""
+    out = format_status(
+        "R001",
+        RelationshipState("R001"),
+        Exposure("R001"),
+        [],
+        Decision.CONTINUE_OBSERVING,
+        0,
+        _empty_support(),
+    )
+    assert "- None." in out
+
+
+def test_format_status_renders_contradictions_and_the_more_marker():
+    candidates = [
+        ContradictionCandidate(
+            attribute="relationship_status",
+            value_a="single",
+            value_b="married",
+            obs_a_id="O001",
+            obs_b_id="O002",
+            explanation="conflicting relationship_status",
+        )
+    ]
+    out = format_status(
+        "R001",
+        RelationshipState("R001"),
+        Exposure("R001"),
+        [],
+        Decision.CONTINUE_OBSERVING,
+        0,
+        _empty_support(),
+        contradictions=candidates,
+        more_conflicts=True,
+    )
+    assert "Conflicting claims (top):" in out
+    assert "'single' vs 'married'" in out
+    assert "to persist all" in out
+
+
+def test_status_summarises_acknowledged_inconsistencies(run, seeded):
+    run("inconsistency", "add", "Alex", "--description", "tuesday differs")
+    run(
+        "inconsistency",
+        "resolve",
+        "I001",
+        "--as",
+        "sequential_change",
+        "--note",
+        "timeline moved",
+    )
+    run("inconsistency", "add", "Alex", "--description", "second one")
+    run("inconsistency", "resolve", "I002", "--as", "dismissed")
+    out = run("status", "Alex")
+    assert "Acknowledged (closed): 2 (1 dismissed, 1 sequential_change)" in out
+
+
+def test_status_lists_top_contradictions(run, seeded):
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says single",
+        "--claim",
+        "relationship_status=single",
+    )
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says married",
+        "--claim",
+        "relationship_status=married",
+    )
+    out = run("status", "Alex")
+    assert "Conflicting claims (top):" in out
+    # Detection order decides which value is "a" and which is "b"; assert on
+    # the pair, not on an ordering the caller does not control.
+    assert "[relationship_status]" in out
+    assert "'single' vs 'married'" in out or "'married' vs 'single'" in out
+
+
+# ---------------------------------------------------------------------------
+# review
+# ---------------------------------------------------------------------------
+
+
+def test_review_reports_no_hooks_and_no_notes(monkeypatch, run, seeded):
+    """Unreachable via `main()`: `run_hooks` always returns a finding.
+
+    Patching `run_review` keeps the CLI's own formatting under test while
+    forcing the empty-collection branches that production data cannot reach.
+    """
+    import love_risk_engine.cli as cli
+
+    real_run_review = cli.run_review
+
+    def no_hooks(db, relationship_id):
+        review = real_run_review(db, relationship_id)
+        review.triggered_hooks = []
+        review.notes = ""
+        return review
+
+    monkeypatch.setattr(cli, "run_review", no_hooks)
+    out = run("review", "Alex")
+    assert "Triggered hooks:" in out
+    assert "  - none" in out
+    assert "Notes:" not in out
+
+
+def test_review_announces_cooldown_after_hard_boundary_hit(run, seeded):
+    out = run(
+        "boundary", "add", "--description", "never shouts at me", "--severity", "HARD"
+    )
+    bid = _first_id(out, "B")
+    run(
+        "boundary",
+        "hit",
+        bid,
+        "--relationship",
+        "Alex",
+        "--evidence",
+        "shouted at me in public",
+    )
+    out = run("review", "Alex")
+    assert "Recommendation: EXIT" in out
+    assert "Cooldown C001 started" in out
+    assert "are gated until it expires" in out
+
+
+# ---------------------------------------------------------------------------
+# boundary
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_hit_records_evidence(run, seeded):
+    out = run("boundary", "add", "--description", "no lying", "--severity", "HARD")
+    bid = _first_id(out, "B")
+    out = run(
+        "boundary",
+        "hit",
+        bid,
+        "--relationship",
+        "Alex",
+        "--evidence",
+        "denied a message I have a screenshot of",
+    )
+    assert "Recorded boundary hit H001" in out
+    assert f"boundary {bid}" in out
+
+
+def test_boundary_hit_rejects_unknown_boundary(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run(
+            "boundary",
+            "hit",
+            "B999",
+            "--relationship",
+            "Alex",
+            "--evidence",
+            "anything",
+        )
+    assert "boundary not found" in str(exc.value)
+
+
+def test_boundary_hit_rejects_unknown_relationship(run, seeded):
+    out = run("boundary", "add", "--description", "no lying", "--severity", "HARD")
+    bid = _first_id(out, "B")
+    with pytest.raises(SystemExit) as exc:
+        run("boundary", "hit", bid, "--relationship", "ghost", "--evidence", "x")
+    assert "relationship not found" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+
+
+def test_list_reports_an_empty_database(run):
+    out = run("list")
+    assert "Relationships:" in out
+    assert "Boundaries:" in out
+    assert out.count("(none)") == 2
+
+
+def test_list_shows_relationships_and_boundaries(run, seeded):
+    run("boundary", "add", "--description", "no lying", "--severity", "SOFT")
+    out = run("list")
+    assert "R001  Alex  [ACTIVE]" in out
+    assert "[SOFT] no lying (ACTIVE)" in out
+
+
+def test_boundary_retire_marks_inactive(run, seeded):
+    """`boundary retire` is the CLI surface for `deactivate_boundary`.
+
+    Before this command existed the only way to retire a boundary was to import
+    `Database` and call the method by hand — which is exactly what this test
+    used to do, meaning the storage capability was unreachable for real users.
+    """
+    out = run("boundary", "add", "--description", "retired rule", "--severity", "SOFT")
+    bid = _first_id(out, "B")
+    out = run("boundary", "retire", bid)
+    assert f"Retired boundary {bid}" in out
+    out = run("list")
+    assert "[SOFT] retired rule (inactive)" in out
+
+
+def test_boundary_retire_unknown_id_exits(db_path, run):
+    run("init")
+    with pytest.raises(SystemExit) as exc:
+        main(["boundary", "retire", "B999"])
+    assert "boundary not found" in str(exc.value)
+
+
+def test_retired_boundary_keeps_its_hits(run, seeded):
+    """Retiring must not erase history: past hits stay on the timeline."""
+    out = run("boundary", "add", "--description", "no lying", "--severity", "HARD")
+    bid = _first_id(out, "B")
+    run("boundary", "hit", bid, "--relationship", seeded, "--evidence", "denied it")
+    run("boundary", "retire", bid)
+    out = run("timeline", seeded)
+    assert "BOUNDARY HIT" in out
+    assert bid in out
+
+
+# ---------------------------------------------------------------------------
+# state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "expected"),
+    [
+        ("--attraction", "7.5", "Attraction       7.5 / 10"),
+        ("--trust", "3", "Trust            3.0 / 10"),
+        ("--uncertainty", "6", "Uncertainty      6.0 / 10"),
+        (
+            "--emotional",
+            EmotionalState.ANXIOUS.name,
+            f"Emotional        {EmotionalState.ANXIOUS.value}",
+        ),
+    ],
+)
+def test_state_set_updates_only_the_field_passed(run, seeded, flag, value, expected):
+    run("state", "set", "Alex", flag, value)
+    assert expected in run("status", "Alex")
+
+
+def test_state_set_with_no_flags_is_a_no_op(run, seeded):
+    out = run("state", "set", "Alex")
+    assert "Updated state for R001" in out
+
+
+# ---------------------------------------------------------------------------
+# exposure — including the cooldown gate (safety-critical)
+# ---------------------------------------------------------------------------
+
+
+def test_exposure_set_updates_every_axis(run, seeded):
+    out = run(
+        "exposure",
+        "set",
+        "Alex",
+        "--time",
+        "2",
+        "--emotional",
+        "3",
+        "--privacy",
+        "1",
+        "--financial",
+        "0.5",
+        "--life-decision",
+        "1",
+    )
+    assert "total 0.0 -> 7.5" in out
+
+
+def test_exposure_raise_is_blocked_during_cooldown(run, cooled_down):
+    out = run("exposure", "set", "Alex", "--time", "5")
+    assert "BLOCKED: an active cooldown prevents raising exposure." in out
+    assert "C001 [EXIT]" in out
+    assert "To override (logged for audit)" in out
+    # The block must actually refuse the write, not just print a warning.
+    assert "  Time           1.0" in run("status", "Alex")
+
+
+def test_lowering_exposure_is_never_blocked(run, cooled_down):
+    out = run("exposure", "set", "Alex", "--time", "0")
+    assert "BLOCKED" not in out
+    assert "Updated exposure" in out
+
+
+def test_override_logs_reason_and_applies(run, cooled_down):
+    out = run(
+        "exposure",
+        "set",
+        "Alex",
+        "--time",
+        "5",
+        "--override",
+        "--reason",
+        "we talked it through in person",
+    )
+    assert "OVERRIDE logged: raising exposure 2.0 -> 6.0" in out
+    assert "Updated exposure" in out
+    # ...and the audit trail is visible from the cooldown view.
+    history = run("cooldown", "Alex")
+    assert "Override history (1):" in history
+    assert "we talked it through in person" in history
+
+
+def test_override_without_a_reason_is_still_logged(run, cooled_down):
+    run("exposure", "set", "Alex", "--time", "5", "--override")
+    assert "(no reason)" in run("cooldown", "Alex")
+
+
+def test_expired_cooldown_does_not_block(run, seeded, db_path):
+    """A cooldown past its expiry must not gate, even while still flagged.
+
+    `list_cooldowns(active_only=True)` filters on the `active` flag only;
+    expiry is a separate check inside `is_active`. Without that second check a
+    stale row would silently lock the user out of raising exposure forever.
+    """
+    from love_risk_engine.core.timeutil import expires_utc_iso
+    from love_risk_engine.storage.database import Database
+
+    db = Database(db_path)
+    try:
+        db.init()
+        db.add_cooldown(
+            relationship_id="R001",
+            decision="PAUSE",
+            reason="stale row from an old session",
+            started_at=expires_utc_iso(-48),
+            expires_at=expires_utc_iso(-24),
+        )
+    finally:
+        db.close()
+
+    out = run("exposure", "set", "Alex", "--time", "4")
+    assert "BLOCKED" not in out
+    assert "Updated exposure" in out
+    # ...and it is not advertised as an active guardrail either.
+    assert "  (none)" in run("cooldown", "Alex")
+
+
+def test_cooldown_clear_lifts_the_gate(run, cooled_down):
+    out = run("cooldown", "Alex", "clear")
+    assert "Cleared 1 active cooldown(s) for R001." in out
+    assert "BLOCKED" not in run("exposure", "set", "Alex", "--time", "5")
+
+
+# ---------------------------------------------------------------------------
+# inconsistency
+# ---------------------------------------------------------------------------
+
+
+def test_inconsistency_list_shows_open_items(run, seeded):
+    run("inconsistency", "add", "Alex", "--description", "story differs")
+    out = run("inconsistency", "list", "Alex")
+    assert "Open inconsistencies for R001:" in out
+    assert "I001 [manual] story differs" in out
+
+
+def test_inconsistency_list_reports_empty_for_both_states(run, seeded):
+    assert "(none)" in run("inconsistency", "list", "Alex")
+    assert "(none)" in run("inconsistency", "list", "Alex", "--resolved")
+
+
+def test_inconsistency_list_shows_resolution_and_note(run, seeded):
+    run("inconsistency", "add", "Alex", "--description", "story differs")
+    run(
+        "inconsistency",
+        "resolve",
+        "I001",
+        "--as",
+        "genuine_inconsistency",
+        "--note",
+        "kept as a flag",
+    )
+    out = run("inconsistency", "list", "Alex", "--resolved")
+    assert "Resolved inconsistencies for R001:" in out
+    assert "-> genuine_inconsistency | kept as a flag" in out
+
+
+def test_inconsistency_list_omits_an_empty_note(run, seeded):
+    run("inconsistency", "add", "Alex", "--description", "story differs")
+    run("inconsistency", "resolve", "I001", "--as", "dismissed")
+    out = run("inconsistency", "list", "Alex", "--resolved")
+    assert "-> dismissed" in out
+    assert " | " not in out
+
+
+def test_inconsistency_list_shows_detected_kind(run, seeded):
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says single",
+        "--claim",
+        "relationship_status=single",
+    )
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says married",
+        "--claim",
+        "relationship_status=married",
+    )
+    run("contradictions", "Alex", "--save")
+    assert "[detected]" in run("inconsistency", "list", "Alex")
+
+
+def test_inconsistency_resolve_rejects_unknown_id(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("inconsistency", "resolve", "I999")
+    assert "inconsistency not found" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# contradictions
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def conflicting_claims(run, seeded):
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says single",
+        "--claim",
+        "relationship_status=single",
+    )
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "says married",
+        "--claim",
+        "relationship_status=married",
+    )
+    return "Alex"
+
+
+def test_contradictions_reports_none(run, seeded):
+    assert "No contradictions detected for R001." in run("contradictions", "Alex")
+
+
+def test_contradictions_marks_new_without_saving(run, conflicting_claims):
+    out = run("contradictions", "Alex")
+    assert "[new]" in out
+    assert "Saved" not in out
+
+
+def test_contradictions_save_is_idempotent(run, conflicting_claims):
+    first = run("contradictions", "Alex", "--save")
+    assert "[saved]" in first
+    assert "Saved 1 new contradiction(s)" in first
+
+    second = run("contradictions", "Alex", "--save")
+    assert "[saved]" in second
+    assert "Saved 0 new contradiction(s)" in second
+
+
+# ---------------------------------------------------------------------------
+# chat import
+# ---------------------------------------------------------------------------
+
+
+def _write(tmp_path, name: str, text: str) -> str:
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_chat_import_rejects_a_missing_file(run, seeded, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        run("chat", "import", "Alex", "--file", str(tmp_path / "nope.txt"))
+    assert "chat file not found" in str(exc.value)
+
+
+def test_chat_import_rejects_malformed_ndjson(run, seeded, tmp_path):
+    bad = _write(tmp_path, "bad.jsonl", '{"timestamp": "2026-08-01T10:00:00+00:00",\n')
+    with pytest.raises(SystemExit) as exc:
+        run("chat", "import", "Alex", "--file", bad)
+    assert "could not parse" in str(exc.value)
+
+
+def test_chat_import_reports_an_empty_file(run, seeded, tmp_path):
+    empty = _write(tmp_path, "empty.txt", "\n\n")
+    assert "No messages parsed" in run("chat", "import", "Alex", "--file", empty)
+
+
+def test_chat_import_extracts_claims_and_surfaces_conflicts(
+    run, seeded, tmp_path, capsys
+):
+    chat = _write(
+        tmp_path,
+        "chat.jsonl",
+        "\n".join(
+            json.dumps(
+                {
+                    "timestamp": f"2026-08-0{day}T10:00:00+00:00",
+                    "speaker": "Alex",
+                    "text": text,
+                }
+            )
+            for day, text in ((1, "he is single"), (2, "he is married"))
+        ),
+    )
+    rules = _write(
+        tmp_path,
+        "rules.json",
+        json.dumps(
+            [
+                {
+                    "attribute": "relationship_status",
+                    "pattern": r"\b(?:he|she|they) (?:is|was) (single|married)\b",
+                }
+            ]
+        ),
+    )
+    out = run("chat", "import", "Alex", "--file", chat, "--rules", rules)
+    assert "Imported 2 observation(s)" in out
+    assert "Extracted 2 structured claim(s) via 1 rule(s)." in out
+    assert "Detected 1 potential contradiction(s)" in out
+
+
+def test_chat_import_reports_clean_when_no_conflicts(run, seeded, tmp_path):
+    chat = _write(
+        tmp_path,
+        "chat.jsonl",
+        json.dumps(
+            {
+                "timestamp": "2026-08-01T10:00:00+00:00",
+                "speaker": "Alex",
+                "text": "hello",
+            }
+        ),
+    )
+    out = run("chat", "import", "Alex", "--file", chat)
+    assert "Imported 1 observation(s)" in out
+    assert "Extracted 0 structured claim(s) via 0 rule(s)." in out
+    assert "No contradictions detected in imported claims." in out
+
+
+# ---------------------------------------------------------------------------
+# timeline
+# ---------------------------------------------------------------------------
+
+
+def test_timeline_merges_every_event_kind(run, seeded):
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "showed up on time",
+        "--signal-type",
+        "COSTLY",
+    )
+    out = run("boundary", "add", "--description", "no lying", "--severity", "HARD")
+    bid = _first_id(out, "B")
+    run(
+        "boundary",
+        "hit",
+        bid,
+        "--relationship",
+        "Alex",
+        "--evidence",
+        "denied a message",
+    )
+    run("inconsistency", "add", "Alex", "--description", "story differs")
+    run("review", "Alex")
+
+    out = run("timeline", "Alex")
+    assert "Timeline for R001 (4 event(s)):" in out
+    assert "O001" in out
+    assert "H001" in out
+    assert "I001" in out
+    assert "RV001" in out
+
+
+def test_timeline_reports_an_empty_history(run, seeded):
+    out = run("timeline", "Alex")
+    assert "Timeline for R001 (0 event(s)):" in out
+
+
+# ---------------------------------------------------------------------------
+# cooldown
+# ---------------------------------------------------------------------------
+
+
+def test_cooldown_list_reports_none(run, seeded):
+    out = run("cooldown", "Alex")
+    assert "Active cooldowns for R001:" in out
+    assert "  (none)" in out
+
+
+def test_cooldown_clear_with_nothing_active(run, seeded):
+    assert "Cleared 0 active cooldown(s) for R001." in run("cooldown", "Alex", "clear")
+
+
+def test_cooldown_list_shows_an_active_cooldown(run, cooled_down):
+    out = run("cooldown", "Alex")
+    assert "C001 [EXIT]" in out
+    assert "remaining" in out

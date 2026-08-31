@@ -21,9 +21,15 @@ def test_review_high_emotion_major_decision_pauses(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.init()
     rid = db.add_relationship("Alex")
-    db.upsert_state(RelationshipState(
-        rid, attraction=5, trust=5, uncertainty=3,
-        emotional_state=EmotionalState.ANXIOUS))
+    db.upsert_state(
+        RelationshipState(
+            rid,
+            attraction=5,
+            trust=5,
+            uncertainty=3,
+            emotional_state=EmotionalState.ANXIOUS,
+        )
+    )
     db.upsert_exposure(Exposure(rid, life_decision=5))
     review = run_review(db, rid)
     assert review.recommendation == Decision.PAUSE.value

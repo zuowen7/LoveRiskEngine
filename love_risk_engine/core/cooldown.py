@@ -16,14 +16,15 @@ Design constraints (honest, no pseudoscience):
     reviews, resolving inconsistencies — all still allowed, because those are
     exactly what the user should do during a cooldown.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional
 
 from .decision import Decision
+from .timeutil import is_future, parse_iso, utc_now_iso
 
 # Default cooldown durations (hours) per decision. Placeholder values.
 _DEFAULT_HOURS = {
@@ -41,28 +42,16 @@ def cooldown_hours_for(decision: Decision) -> int:
     """
     env = os.environ.get("LRE_COOLDOWN_HOURS")
     if env:
-        try:
+        with contextlib.suppress(ValueError):
             hours = int(env)
             if hours > 0:
                 return hours
-        except ValueError:
-            pass
     return _DEFAULT_HOURS.get(decision, 24)
 
 
 def is_blocking(decision: Decision) -> bool:
     """Only PAUSE / DECREASE_EXPOSURE / EXIT trigger a cooldown."""
     return decision in _DEFAULT_HOURS
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _expires_iso(hours: int) -> str:
-    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(
-        timespec="seconds"
-    )
 
 
 @dataclass
@@ -76,30 +65,31 @@ class Cooldown:
     active: bool = True
 
 
-def is_active(cooldown: Cooldown, now: Optional[str] = None) -> bool:
-    """A cooldown is active if flagged active AND not yet expired."""
+def is_active(cooldown: Cooldown, now: str | None = None) -> bool:
+    """A cooldown is active if flagged active AND not yet expired.
+
+    Compares parsed datetimes rather than raw strings, so a row written by an
+    older version (naive timestamp) is still evaluated correctly.
+    """
     if not cooldown.active:
         return False
-    now = now or _now_iso()
-    return cooldown.expires_at > now
+    return is_future(cooldown.expires_at, now=now)
 
 
-def format_remaining(cooldown: Cooldown, now: Optional[str] = None) -> str:
+def format_remaining(cooldown: Cooldown, now: str | None = None) -> str:
     """Human-readable time remaining, or 'expired'/'inactive'."""
     if not cooldown.active:
         return "inactive"
-    now = now or _now_iso()
-    if cooldown.expires_at <= now:
+    now = now or utc_now_iso()
+    if not is_future(cooldown.expires_at, now=now):
         return "expired"
-    # parse back to datetime for a clean delta
-    try:
-        exp = datetime.fromisoformat(cooldown.expires_at)
-        cur = datetime.fromisoformat(now)
-        delta = exp - cur
-        hours = int(delta.total_seconds() // 3600)
-        minutes = int((delta.total_seconds() % 3600) // 60)
-        if hours > 0:
-            return f"{hours}h{minutes}m remaining"
-        return f"{minutes}m remaining"
-    except ValueError:
+    exp = parse_iso(cooldown.expires_at)
+    cur = parse_iso(now)
+    if exp is None or cur is None:
         return f"until {cooldown.expires_at}"
+    delta = exp - cur
+    hours = int(delta.total_seconds() // 3600)
+    minutes = int((delta.total_seconds() % 3600) // 60)
+    if hours > 0:
+        return f"{hours}h{minutes}m remaining"
+    return f"{minutes}m remaining"

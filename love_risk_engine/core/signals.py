@@ -12,15 +12,15 @@ Design constraints (honest, no pseudoscience):
   - The weight a signal carries in the evidence-support model is a transparent
     placeholder coefficient (see core/evidence.py), not a calibrated likelihood.
 """
+
 from __future__ import annotations
 
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 
-class SignalType(str, Enum):
-    CHEAP = "CHEAP"            # easy to say, hard to verify, low cost to fake
-    COSTLY = "COSTLY"          # imposes cost / hard to fake / verifiable action
+class SignalType(StrEnum):
+    CHEAP = "CHEAP"  # easy to say, hard to verify, low cost to fake
+    COSTLY = "COSTLY"  # imposes cost / hard to fake / verifiable action
     UNSPECIFIED = "UNSPECIFIED"
 
     @property
@@ -41,18 +41,37 @@ class SignalType(str, Enum):
 # Crude keyword lexicons. Intentionally short and obvious; the goal is to
 # prompt the user to think, not to be a NLP classifier.
 _CHEAP_MARKERS = (
-    "i promise", "i swear", "trust me", "i'd never", "i would never",
-    "i love you", "believe me", "i'd never lie", "cross my heart",
+    "i promise",
+    "i swear",
+    "trust me",
+    "i'd never",
+    "i would never",
+    "i love you",
+    "believe me",
+    "i'd never lie",
+    "cross my heart",
 )
 _COSTLY_MARKERS = (
-    "introduced me to", "met my", "introduced me", "paid", "paid back",
-    "showed up", "showed up on time", "signed", "moved in", "gave me the keys",
-    "put my name on", "added me to", "came with me to", "drove me to the",
-    "stayed with me at the", "co-signed",
+    "introduced me to",
+    "met my",
+    "introduced me",
+    "paid",
+    "paid back",
+    "showed up",
+    "showed up on time",
+    "signed",
+    "moved in",
+    "gave me the keys",
+    "put my name on",
+    "added me to",
+    "came with me to",
+    "drove me to the",
+    "stayed with me at the",
+    "co-signed",
 )
 
 
-def suggest_signal_type(text: str) -> Optional[SignalType]:
+def suggest_signal_type(text: str) -> SignalType | None:
     """Return a *hint* for the user, or None if no clear marker.
 
     If both cheap and costly markers appear, returns None (ambiguous) so the

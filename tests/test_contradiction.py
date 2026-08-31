@@ -1,6 +1,6 @@
 """Tests for the contradiction tracker (roadmap feature)."""
-import pytest
 
+import pytest
 from love_risk_engine.core.contradiction import (
     contradiction_key,
     detect_contradictions,
@@ -112,11 +112,23 @@ def test_claims_round_trip(db):
 def test_save_contradiction_idempotent(db):
     db.add_relationship("Alex")
     db.add_observation(
-        "R001", "signal", "a", "", "", "self", 5.0,
+        "R001",
+        "signal",
+        "a",
+        "",
+        "",
+        "self",
+        5.0,
         claims=[Claim("status", "single")],
     )
     db.add_observation(
-        "R001", "signal", "b", "", "", "self", 5.0,
+        "R001",
+        "signal",
+        "b",
+        "",
+        "",
+        "self",
+        5.0,
         claims=[Claim("status", "married")],
     )
     # detect
@@ -135,7 +147,7 @@ def test_save_contradiction_idempotent(db):
     # feeds the inconsistency pipeline (and thus review counts)
     unresolved = db.list_inconsistencies("R001", resolved=False)
     assert len(unresolved) == 1
-    assert unresolved[0]["kind"] == "detected"
+    assert unresolved[0].kind == "detected"
 
 
 # --- CLI smoke ------------------------------------------------------------
@@ -146,16 +158,26 @@ def test_cli_contradiction_flow(tmp_path, monkeypatch):
     monkeypatch.setenv("LRE_DB_PATH", db_path)
     cli.main(["init"])
     cli.main(["relationship", "add", "Alex"])
-    cli.main([
-        "observe", "Alex",
-        "--observation", "said single",
-        "--claim", "relationship_status=single",
-    ])
-    cli.main([
-        "observe", "Alex",
-        "--observation", "mentioned wife",
-        "--claim", "relationship_status=married",
-    ])
+    cli.main(
+        [
+            "observe",
+            "Alex",
+            "--observation",
+            "said single",
+            "--claim",
+            "relationship_status=single",
+        ]
+    )
+    cli.main(
+        [
+            "observe",
+            "Alex",
+            "--observation",
+            "mentioned wife",
+            "--claim",
+            "relationship_status=married",
+        ]
+    )
     # detect (not saved yet)
     out = []
     monkeypatch.setattr("sys.stdout", _Collector(out))

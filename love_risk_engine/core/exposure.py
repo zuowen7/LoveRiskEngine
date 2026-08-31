@@ -6,6 +6,7 @@ Design principle #3 (Exposure must not outrun Evidence):
   bias detector's exposure-vs-evidence heuristic (which is intentionally
   uncalibrated in v0.1).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

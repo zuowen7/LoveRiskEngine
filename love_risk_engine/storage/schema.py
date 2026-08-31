@@ -3,7 +3,20 @@
 Default local database, no external services. Only the minimal PII the user
 chooses to enter is stored (alias + free-text notes). No phone / ID / address
 fields are ever created.
+
+Schema versioning
+-----------------
+`SCHEMA_VERSION` is the version that the DDL below declares, and it is stamped
+into the database via `PRAGMA user_version`. `Database._migrate()` compares the
+two and does nothing when they match, so the common case costs a single integer
+read instead of re-scanning `PRAGMA table_info` on every CLI invocation.
+
+To add a column: extend the DDL below, bump `SCHEMA_VERSION`, and add a
+matching `_migrate_vN_to_vN1` step in `storage/database.py`. Never renumber an
+existing version — databases in the wild are already stamped with it.
 """
+
+SCHEMA_VERSION = 1
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS relationships (

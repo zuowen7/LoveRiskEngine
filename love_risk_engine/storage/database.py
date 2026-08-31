@@ -1,51 +1,142 @@
 """SQLite-backed storage for LoveRiskEngine.
 
-Pure stdlib (sqlite3). All public methods take/return domain objects defined
-in `core`, so the rest of the app never touches raw rows. IDs are readable
-sequential tokens (R001, O001, B001, ...) for easy CLI use.
+Pure stdlib (sqlite3). IDs are readable sequential tokens (R001, O001, B001,
+...) for easy CLI use.
+
+Every query returns a **domain object**, never a raw `sqlite3.Row`:
+  - observations, relationship state, exposure, boundaries, boundary hits,
+    relationships, inconsistencies, reviews, cooldowns, overrides.
+
+Callers use attribute access (`row.id`), which is why the SIM118 exemption
+for `sqlite3.Row` no longer applies anywhere — there are no rows left.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
-from datetime import datetime
-from typing import List, Optional
+from collections.abc import Iterator
+from datetime import UTC, datetime
 
+from ..core.boundaries import Boundary, BoundaryHit
+from ..core.cooldown import Cooldown
 from ..core.exposure import Exposure
+from ..core.inconsistency import Inconsistency
 from ..core.observation import Claim, Observation
+from ..core.override import OverrideLog
+from ..core.relationship import Relationship
+from ..core.review import Review
 from ..core.signals import SignalType
 from ..core.state import EmotionalState, RelationshipState
-from .schema import SCHEMA
+from .schema import SCHEMA, SCHEMA_VERSION
+
+# SQL identifiers can never be bound as parameters, so we allow-list them.
+# Adding a table/column to this set is a deliberate, reviewable act.
+_ALLOWED_IDENTIFIERS = {
+    ("relationships", "id"),
+    ("observations", "id"),
+    ("boundaries", "id"),
+    ("boundary_hits", "id"),
+    ("inconsistencies", "id"),
+    ("cooldowns", "id"),
+    ("override_log", "id"),
+}
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    """UTC ISO-8601 with an explicit offset.
+
+    Naive local time made timeline ordering ambiguous across DST and
+    timezones. UTC keeps every stored timestamp directly comparable.
+    """
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _next_id(db: "Database", prefix: str, table: str, column: str) -> str:
-    cur = db.conn.execute(  # type: ignore[union-attr]
-        f"SELECT {column} FROM {table} WHERE {column} LIKE ?", (prefix + "%",)
+def _next_id(db: Database, prefix: str, table: str, column: str) -> str:
+    if (table, column) not in _ALLOWED_IDENTIFIERS:
+        raise ValueError(f"refusing to build an id from {table}.{column}")
+    # Identifiers cannot be parameterised in SQL, so they are allow-listed
+    # above. Every value that reaches the query is still bound as a parameter.
+    cur = db._db.execute(
+        f"SELECT {column} FROM {table} WHERE {column} LIKE ?",  # noqa: S608
+        (prefix + "%",),
     )
-    nums: List[int] = []
+    nums: list[int] = []
     for (val,) in cur.fetchall():
-        try:
-            nums.append(int(str(val)[len(prefix):]))
-        except ValueError:
-            pass
+        with contextlib.suppress(ValueError):
+            nums.append(int(str(val)[len(prefix) :]))
     n = (max(nums) + 1) if nums else 1
-    return f"{prefix}{n:03d}"
+    token = f"{prefix}{n:03d}"
+    # `id` is the PRIMARY KEY, so a duplicate insert would raise IntegrityError.
+    # That is enough under the single-user CLI model, but we also defend here:
+    # if the candidate already exists (e.g. a recycled id, or a concurrent
+    # writer), walk forward to the next free token instead of failing.
+    while db._db.execute(
+        f"SELECT 1 FROM {table} WHERE {column}=?",  # noqa: S608
+        (token,),
+    ).fetchone():
+        n += 1
+        token = f"{prefix}{n:03d}"
+    return token
 
 
 class Database:
     def __init__(self, path: str = "love_risk.db") -> None:
         self.path = path
-        self.conn: Optional[sqlite3.Connection] = None
+        self.conn: sqlite3.Connection | None = None
+        self._tx_depth = 0
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        """Non-optional accessor for the live connection.
+
+        Preferred over scattering `# type: ignore[union-attr]`: the Optional is
+        resolved once, here, and misuse raises instead of silently passing.
+        """
+        if self.conn is None:
+            raise RuntimeError(
+                "Database is not connected. Call connect() or use `with Database(...)`."
+            )
+        return self.conn
+
+    def _commit(self) -> None:
+        """Commit, unless an outer `transaction()` owns the boundary.
+
+        Write methods must call this instead of `conn.commit()` directly.
+        Without it, a helper that commits internally would silently destroy the
+        atomicity of any transaction wrapping it — the outer rollback would
+        have nothing left to undo.
+        """
+        if self._tx_depth:
+            return
+        self._db.commit()
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Group writes into one atomic unit: all-or-nothing, and faster.
+
+        Without this, a bulk import that fails halfway leaves partial data
+        behind and pays a commit (fsync) per row. Nesting is supported: only
+        the outermost block commits, and any failure rolls back the lot.
+        """
+        conn = self._db
+        self._tx_depth += 1
+        try:
+            yield conn
+        except Exception:
+            self._tx_depth -= 1
+            conn.rollback()
+            raise
+        else:
+            self._tx_depth -= 1
+            conn.commit()
 
     # --- lifecycle ---
     def connect(self) -> None:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        self._db.execute("PRAGMA foreign_keys = ON")
 
     def close(self) -> None:
         if self.conn:
@@ -55,14 +146,42 @@ class Database:
     def init(self) -> None:
         if self.conn is None:
             self.connect()
-        assert self.conn is not None
-        self.conn.executescript(SCHEMA)
+        self._db.executescript(SCHEMA)
         self._migrate()
-        self.conn.commit()
+        self._commit()
+
+    # --- schema versioning ---
+    def _user_version(self) -> int:
+        row = self._db.execute("PRAGMA user_version").fetchone()
+        return int(row[0]) if row else 0
+
+    def _set_user_version(self, version: int) -> None:
+        # PRAGMA does not accept bound parameters. `version` is an int constant
+        # owned by this package and is coerced with int(), never user input.
+        self._db.execute(f"PRAGMA user_version = {int(version)}")
 
     def _migrate(self) -> None:
-        """Make schema additions backward-compatible with older databases."""
-        self.conn.execute(  # type: ignore[union-attr]
+        """Bring an existing database up to `SCHEMA_VERSION`.
+
+        The version lives in `PRAGMA user_version`. An up-to-date database
+        returns after one integer read; previously every `init()` — i.e. every
+        single CLI invocation — re-ran three `PRAGMA table_info` scans and a
+        batch of speculative `ALTER TABLE` statements to rediscover that there
+        was nothing to do.
+        """
+        version = self._user_version()
+        if version >= SCHEMA_VERSION:
+            return
+        if version == 0:
+            # Either a database just created from the DDL above (which already
+            # declares every column) or one written before versioning existed.
+            # The back-fill is idempotent and covers both; it runs exactly once.
+            self._migrate_v0_to_v1()
+        self._set_user_version(SCHEMA_VERSION)
+
+    def _migrate_v0_to_v1(self) -> None:
+        """Back-fill columns added after the original v0.1 schema shipped."""
+        self._db.execute(
             "CREATE TABLE IF NOT EXISTS observation_claims ("
             "observation_id TEXT NOT NULL, attribute TEXT NOT NULL, "
             "value TEXT NOT NULL, idx INTEGER NOT NULL DEFAULT 0, "
@@ -70,9 +189,7 @@ class Database:
         )
         cols = {
             r[1]
-            for r in self.conn.execute(  # type: ignore[union-attr]
-                "PRAGMA table_info(inconsistencies)"
-            ).fetchall()
+            for r in self._db.execute("PRAGMA table_info(inconsistencies)").fetchall()
         }
         new_cols = {
             "kind": "TEXT NOT NULL DEFAULT 'manual'",
@@ -84,65 +201,69 @@ class Database:
         }
         for col, ddl in new_cols.items():
             if col not in cols:
-                self.conn.execute(  # type: ignore[union-attr]
-                    f"ALTER TABLE inconsistencies ADD COLUMN {col} {ddl}"
-                )
+                self._db.execute(f"ALTER TABLE inconsistencies ADD COLUMN {col} {ddl}")
         # signal_type on observations (v0.2 costly-signal classification)
         obs_cols = {
-            r[1]
-            for r in self.conn.execute(  # type: ignore[union-attr]
-                "PRAGMA table_info(observations)"
-            ).fetchall()
+            r[1] for r in self._db.execute("PRAGMA table_info(observations)").fetchall()
         }
         if "signal_type" not in obs_cols:
-            self.conn.execute(  # type: ignore[union-attr]
+            self._db.execute(
                 "ALTER TABLE observations ADD COLUMN signal_type "
                 "TEXT NOT NULL DEFAULT 'UNSPECIFIED'"
             )
         # resolution tracking on inconsistencies (v0.2 contradiction UX)
         inc_cols = {
             r[1]
-            for r in self.conn.execute(  # type: ignore[union-attr]
-                "PRAGMA table_info(inconsistencies)"
-            ).fetchall()
+            for r in self._db.execute("PRAGMA table_info(inconsistencies)").fetchall()
         }
         for col, ddl in {
             "resolution": "TEXT",
             "resolution_note": "TEXT NOT NULL DEFAULT ''",
         }.items():
             if col not in inc_cols:
-                self.conn.execute(  # type: ignore[union-attr]
-                    f"ALTER TABLE inconsistencies ADD COLUMN {col} {ddl}"
-                )
+                self._db.execute(f"ALTER TABLE inconsistencies ADD COLUMN {col} {ddl}")
 
-    def __enter__(self) -> "Database":
+    def __enter__(self) -> Database:
         self.init()
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
         self.close()
 
     # --- relationships ---
     def add_relationship(self, alias: str, status: str = "ACTIVE") -> str:
         rid = _next_id(self, "R", "relationships", "id")
-        self.conn.execute(  # type: ignore[union-attr]
-            "INSERT INTO relationships(id, alias, status, created_at) "
-            "VALUES (?,?,?,?)",
+        self._db.execute(
+            "INSERT INTO relationships(id, alias, status, created_at) VALUES (?,?,?,?)",
             (rid, alias, status, _now()),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return rid
 
-    def get_relationship(self, token: str) -> Optional[sqlite3.Row]:
-        return self.conn.execute(  # type: ignore[union-attr]
+    def get_relationship(self, token: str) -> Relationship | None:
+        row = self._db.execute(
             "SELECT * FROM relationships WHERE id=? OR alias=?",
             (token, token),
         ).fetchone()
+        return self._row_to_relationship(row) if row else None
 
-    def list_relationships(self) -> List[sqlite3.Row]:
-        return self.conn.execute(  # type: ignore[union-attr]
-            "SELECT * FROM relationships ORDER BY id"
-        ).fetchall()
+    def list_relationships(self) -> list[Relationship]:
+        return [
+            self._row_to_relationship(r)
+            for r in self._db.execute(
+                "SELECT * FROM relationships ORDER BY id"
+            ).fetchall()
+        ]
+
+    def _row_to_relationship(self, r: sqlite3.Row) -> Relationship:
+        return Relationship(
+            id=r["id"], alias=r["alias"], status=r["status"], created_at=r["created_at"]
+        )
 
     # --- observations ---
     def add_observation(
@@ -156,11 +277,11 @@ class Database:
         confidence: float,
         rationalization: bool = False,
         inconsistency_flag: bool = False,
-        claims: Optional[List[Claim]] = None,
+        claims: list[Claim] | None = None,
         signal_type: SignalType = SignalType.UNSPECIFIED,
     ) -> str:
         oid = _next_id(self, "O", "observations", "id")
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO observations("
             "id, relationship_id, timestamp, category, observation, "
             "interpretation, alternative_explanation, source, confidence, "
@@ -182,54 +303,60 @@ class Database:
             ),
         )
         for idx, c in enumerate(claims or []):
-            self.conn.execute(  # type: ignore[union-attr]
+            self._db.execute(
                 "INSERT INTO observation_claims("
                 "observation_id, attribute, value, idx) VALUES (?,?,?,?)",
                 (oid, c.attribute.strip(), c.value.strip(), idx),
             )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return oid
 
-    def get_observations(self, relationship_id: str) -> List[Observation]:
-        rows = self.conn.execute(  # type: ignore[union-attr]
+    def get_observations(self, relationship_id: str) -> list[Observation]:
+        rows = self._db.execute(
             "SELECT * FROM observations WHERE relationship_id=? ORDER BY timestamp",
             (relationship_id,),
         ).fetchall()
         return [self._row_to_observation(r) for r in rows]
 
     def import_observations(
-        self, relationship_id: str, observations: List[Observation]
+        self, relationship_id: str, observations: list[Observation]
     ) -> int:
         """Bulk-insert observations (e.g. from a chat import).
 
         Reuses add_observation so claims are persisted too. Returns the number
         of observations inserted. Never deletes or overwrites existing data.
+
+        The whole batch runs in one transaction: a failure part-way through
+        rolls back every row rather than leaving the import half-applied.
         """
         count = 0
-        for o in observations:
-            self.add_observation(
-                relationship_id,
-                o.category,
-                o.observation,
-                o.interpretation,
-                o.alternative_explanation,
-                o.source,
-                o.confidence,
-                o.rationalization,
-                o.inconsistency_flag,
-                claims=o.claims,
-                signal_type=o.signal_type,
-            )
-            count += 1
+        with self.transaction():
+            for o in observations:
+                self.add_observation(
+                    relationship_id,
+                    o.category,
+                    o.observation,
+                    o.interpretation,
+                    o.alternative_explanation,
+                    o.source,
+                    o.confidence,
+                    o.rationalization,
+                    o.inconsistency_flag,
+                    claims=o.claims,
+                    signal_type=o.signal_type,
+                )
+                count += 1
         return count
 
     def _row_to_observation(self, r: sqlite3.Row) -> Observation:
-        claim_rows = self.conn.execute(  # type: ignore[union-attr]
+        claim_rows = self._db.execute(
             "SELECT attribute, value FROM observation_claims "
             "WHERE observation_id=? ORDER BY idx",
             (r["id"],),
         ).fetchall()
-        claims = [Claim(attribute=cr["attribute"], value=cr["value"]) for cr in claim_rows]
+        claims = [
+            Claim(attribute=cr["attribute"], value=cr["value"]) for cr in claim_rows
+        ]
         return Observation(
             id=r["id"],
             relationship_id=r["relationship_id"],
@@ -249,7 +376,7 @@ class Database:
     # --- state ---
     def upsert_state(self, state: RelationshipState) -> None:
         state.clamp()
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO relationship_state("
             "relationship_id, attraction, trust, uncertainty, emotional_state) "
             "VALUES (?,?,?,?,?) "
@@ -265,10 +392,10 @@ class Database:
                 state.emotional_state.value,
             ),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
 
-    def get_state(self, relationship_id: str) -> Optional[RelationshipState]:
-        r = self.conn.execute(  # type: ignore[union-attr]
+    def get_state(self, relationship_id: str) -> RelationshipState | None:
+        r = self._db.execute(
             "SELECT * FROM relationship_state WHERE relationship_id=?",
             (relationship_id,),
         ).fetchone()
@@ -285,7 +412,7 @@ class Database:
     # --- exposure ---
     def upsert_exposure(self, exposure: Exposure) -> None:
         exposure.clamp()
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO exposure("
             "relationship_id, time, emotional, privacy, financial, life_decision) "
             "VALUES (?,?,?,?,?,?) "
@@ -302,10 +429,10 @@ class Database:
                 exposure.life_decision,
             ),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
 
-    def get_exposure(self, relationship_id: str) -> Optional[Exposure]:
-        r = self.conn.execute(  # type: ignore[union-attr]
+    def get_exposure(self, relationship_id: str) -> Exposure | None:
+        r = self._db.execute(
             "SELECT * FROM exposure WHERE relationship_id=?",
             (relationship_id,),
         ).fetchone()
@@ -325,44 +452,78 @@ class Database:
         self, description: str, severity: str = "HARD", trigger_keywords: str = ""
     ) -> str:
         bid = _next_id(self, "B", "boundaries", "id")
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO boundaries(id, description, severity, active, "
             "trigger_keywords) VALUES (?,?,?,?,?)",
             (bid, description, severity, 1, trigger_keywords),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return bid
 
-    def get_boundary(self, boundary_id: str) -> Optional[sqlite3.Row]:
-        return self.conn.execute(  # type: ignore[union-attr]
+    def get_boundary(self, boundary_id: str) -> Boundary | None:
+        row = self._db.execute(
             "SELECT * FROM boundaries WHERE id=?", (boundary_id,)
         ).fetchone()
+        return self._row_to_boundary(row) if row else None
 
-    def list_boundaries(self, active_only: bool = False) -> List[sqlite3.Row]:
+    def list_boundaries(self, active_only: bool = False) -> list[Boundary]:
         sql = "SELECT * FROM boundaries"
         params: tuple = ()
         if active_only:
             sql += " WHERE active=1"
         sql += " ORDER BY id"
-        return self.conn.execute(sql, params).fetchall()  # type: ignore[union-attr]
+        return [
+            self._row_to_boundary(r) for r in self._db.execute(sql, params).fetchall()
+        ]
+
+    def deactivate_boundary(self, boundary_id: str) -> bool:
+        """Retire a boundary without deleting it. Returns False if unknown.
+
+        Boundaries are retired, never dropped: `list_boundaries(active_only=False)`
+        still reports them, so earlier boundary_hits stay interpretable and the
+        audit trail remains intact.
+        """
+        cur = self._db.execute(
+            "UPDATE boundaries SET active=0 WHERE id=?", (boundary_id,)
+        )
+        self._commit()
+        return cur.rowcount > 0
+
+    def _row_to_boundary(self, r: sqlite3.Row) -> Boundary:
+        return Boundary(
+            id=r["id"],
+            description=r["description"],
+            severity=r["severity"],
+            active=bool(r["active"]),
+            trigger_keywords=r["trigger_keywords"],
+        )
+
+    def _row_to_boundary_hit(self, r: sqlite3.Row) -> BoundaryHit:
+        return BoundaryHit(
+            id=r["id"],
+            boundary_id=r["boundary_id"],
+            relationship_id=r["relationship_id"],
+            evidence=r["evidence"],
+            timestamp=r["timestamp"],
+        )
 
     # --- boundary hits ---
     def add_boundary_hit(
         self, boundary_id: str, relationship_id: str, evidence: str
     ) -> str:
         hid = _next_id(self, "H", "boundary_hits", "id")
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO boundary_hits("
             "id, boundary_id, relationship_id, evidence, timestamp) "
             "VALUES (?,?,?,?,?)",
             (hid, boundary_id, relationship_id, evidence, _now()),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return hid
 
     def list_boundary_hits(
         self, relationship_id: str, only_hard: bool = False
-    ) -> List[sqlite3.Row]:
+    ) -> list[BoundaryHit]:
         sql = (
             "SELECT h.* FROM boundary_hits h "
             "JOIN boundaries b ON h.boundary_id = b.id "
@@ -371,18 +532,21 @@ class Database:
         params: list = [relationship_id]
         if only_hard:
             sql += " AND b.severity='HARD'"
-        return self.conn.execute(sql, tuple(params)).fetchall()  # type: ignore[union-attr]
+        return [
+            self._row_to_boundary_hit(r)
+            for r in self._db.execute(sql, tuple(params)).fetchall()
+        ]
 
     # --- inconsistencies ---
     def add_inconsistency(self, relationship_id: str, description: str) -> str:
         iid = _next_id(self, "I", "inconsistencies", "id")
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO inconsistencies("
             "id, relationship_id, description, resolved, created_at) "
             "VALUES (?,?,?,?,?)",
             (iid, relationship_id, description, 0, _now()),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return iid
 
     def resolve_inconsistency(
@@ -399,42 +563,63 @@ class Database:
           'dismissed'             — reviewed, not a real conflict
         All three close the item; the type is kept for audit.
         """
-        cur = self.conn.execute(  # type: ignore[union-attr]
+        cur = self._db.execute(
             "UPDATE inconsistencies SET resolved=1, resolution=?, resolution_note=? "
             "WHERE id=?",
             (resolution, note, inconsistency_id),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return cur.rowcount > 0
 
     def list_inconsistencies(
         self, relationship_id: str, resolved: bool = False
-    ) -> List[sqlite3.Row]:
-        return self.conn.execute(  # type: ignore[union-attr]
-            "SELECT * FROM inconsistencies "
-            "WHERE relationship_id=? AND resolved=? ORDER BY id",
-            (relationship_id, 1 if resolved else 0),
-        ).fetchall()
+    ) -> list[Inconsistency]:
+        return [
+            self._row_to_inconsistency(r)
+            for r in self._db.execute(
+                "SELECT * FROM inconsistencies "
+                "WHERE relationship_id=? AND resolved=? ORDER BY id",
+                (relationship_id, 1 if resolved else 0),
+            ).fetchall()
+        ]
 
-    def acknowledged_inconsistencies(
-        self, relationship_id: str
-    ) -> List[sqlite3.Row]:
+    def acknowledged_inconsistencies(self, relationship_id: str) -> list[Inconsistency]:
         """Resolved items kept as audit / 'acknowledged yellow flags'.
 
         All resolved items are returned; callers distinguish by `resolution`.
         """
-        return self.conn.execute(  # type: ignore[union-attr]
-            "SELECT * FROM inconsistencies "
-            "WHERE relationship_id=? AND resolved=1 ORDER BY id",
-            (relationship_id,),
-        ).fetchall()
+        return [
+            self._row_to_inconsistency(r)
+            for r in self._db.execute(
+                "SELECT * FROM inconsistencies "
+                "WHERE relationship_id=? AND resolved=1 ORDER BY id",
+                (relationship_id,),
+            ).fetchall()
+        ]
+
+    def _row_to_inconsistency(self, r: sqlite3.Row) -> Inconsistency:
+        return Inconsistency(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            description=r["description"],
+            resolved=bool(r["resolved"]),
+            created_at=r["created_at"],
+            kind=r["kind"],
+            attribute=r["attribute"],
+            value_a=r["value_a"],
+            value_b=r["value_b"],
+            obs_a=r["obs_a"],
+            obs_b=r["obs_b"],
+            resolution=r["resolution"],
+            resolution_note=r["resolution_note"],
+        )
 
     # --- contradictions (auto-detected inconsistencies) ---
     def find_contradiction(
         self, relationship_id: str, attribute: str, obs_a: str, obs_b: str
     ) -> bool:
         ka, kb = (obs_a, obs_b) if obs_a <= obs_b else (obs_b, obs_a)
-        cur = self.conn.execute(  # type: ignore[union-attr]
+        cur = self._db.execute(
             "SELECT 1 FROM inconsistencies "
             "WHERE relationship_id=? AND kind='detected' "
             "AND attribute=? AND obs_a=? AND obs_b=? LIMIT 1",
@@ -443,8 +628,14 @@ class Database:
         return cur.fetchone() is not None
 
     def save_contradiction_candidate(
-        self, relationship_id: str, attribute: str, value_a: str, value_b: str, obs_a: str, obs_b: str
-    ) -> Optional[str]:
+        self,
+        relationship_id: str,
+        attribute: str,
+        value_a: str,
+        value_b: str,
+        obs_a: str,
+        obs_b: str,
+    ) -> str | None:
         """Persist a detected conflict as an unresolved inconsistency.
 
         Idempotent: returns None if an equivalent candidate is already saved.
@@ -453,10 +644,8 @@ class Database:
         if self.find_contradiction(relationship_id, attribute, ka, kb):
             return None
         iid = _next_id(self, "I", "inconsistencies", "id")
-        description = (
-            f"[{attribute}] {value_a!r} vs {value_b!r} (obs {ka}, {kb})"
-        )
-        self.conn.execute(  # type: ignore[union-attr]
+        description = f"[{attribute}] {value_a!r} vs {value_b!r} (obs {ka}, {kb})"
+        self._db.execute(
             "INSERT INTO inconsistencies("
             "id, relationship_id, description, resolved, created_at, "
             "kind, attribute, value_a, value_b, obs_a, obs_b) "
@@ -475,12 +664,12 @@ class Database:
                 kb,
             ),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return iid
 
     # --- reviews ---
-    def save_review(self, review: "Review") -> None:  # type: ignore[name-defined]
-        self.conn.execute(  # type: ignore[union-attr]
+    def save_review(self, review: Review) -> None:
+        self._db.execute(
             "INSERT INTO reviews("
             "id, relationship_id, timestamp, triggered_hooks, "
             "unresolved_inconsistencies, recommendation, notes) "
@@ -495,20 +684,38 @@ class Database:
                 review.notes,
             ),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
 
-    def list_reviews(self, relationship_id: str) -> List[sqlite3.Row]:
-        return self.conn.execute(  # type: ignore[union-attr]
-            "SELECT * FROM reviews WHERE relationship_id=? ORDER BY timestamp",
-            (relationship_id,),
-        ).fetchall()
+    def list_reviews(self, relationship_id: str) -> list[Review]:
+        return [
+            self._row_to_review(r)
+            for r in self._db.execute(
+                "SELECT * FROM reviews WHERE relationship_id=? ORDER BY timestamp",
+                (relationship_id,),
+            ).fetchall()
+        ]
 
-    def list_all_inconsistencies(self, relationship_id: str) -> List[sqlite3.Row]:
+    def _row_to_review(self, r: sqlite3.Row) -> Review:
+        hooks = r["triggered_hooks"]
+        return Review(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            timestamp=r["timestamp"],
+            triggered_hooks=json.loads(hooks) if hooks else [],
+            unresolved_inconsistencies=r["unresolved_inconsistencies"],
+            recommendation=r["recommendation"],
+            notes=r["notes"] or "",
+        )
+
+    def list_all_inconsistencies(self, relationship_id: str) -> list[Inconsistency]:
         """All inconsistencies (open + resolved) for the timeline / audit view."""
-        return self.conn.execute(  # type: ignore[union-attr]
-            "SELECT * FROM inconsistencies WHERE relationship_id=? ORDER BY id",
-            (relationship_id,),
-        ).fetchall()
+        return [
+            self._row_to_inconsistency(r)
+            for r in self._db.execute(
+                "SELECT * FROM inconsistencies WHERE relationship_id=? ORDER BY id",
+                (relationship_id,),
+            ).fetchall()
+        ]
 
     # --- cooldowns / precommitment ---
     def add_cooldown(
@@ -520,52 +727,79 @@ class Database:
         expires_at: str,
     ) -> str:
         cid = _next_id(self, "C", "cooldowns", "id")
-        self.conn.execute(  # type: ignore[union-attr]
+        self._db.execute(
             "INSERT INTO cooldowns("
             "id, relationship_id, decision, reason, started_at, expires_at, active) "
             "VALUES (?,?,?,?,?,?,1)",
             (cid, relationship_id, decision, reason, started_at, expires_at),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return cid
 
     def list_cooldowns(
         self, relationship_id: str, active_only: bool = True
-    ) -> List[sqlite3.Row]:
+    ) -> list[Cooldown]:
         sql = "SELECT * FROM cooldowns WHERE relationship_id=?"
         params: list = [relationship_id]
         if active_only:
             sql += " AND active=1"
         sql += " ORDER BY started_at DESC"
-        return self.conn.execute(sql, tuple(params)).fetchall()  # type: ignore[union-attr]
+        return [
+            self._row_to_cooldown(r)
+            for r in self._db.execute(sql, tuple(params)).fetchall()
+        ]
+
+    def _row_to_cooldown(self, r: sqlite3.Row) -> Cooldown:
+        return Cooldown(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            decision=r["decision"],
+            reason=r["reason"],
+            started_at=r["started_at"],
+            expires_at=r["expires_at"],
+            active=bool(r["active"]),
+        )
 
     def clear_cooldowns(self, relationship_id: str) -> int:
         """Deactivate all active cooldowns for a relationship. Returns count."""
-        cur = self.conn.execute(  # type: ignore[union-attr]
+        cur = self._db.execute(
             "UPDATE cooldowns SET active=0 WHERE relationship_id=? AND active=1",
             (relationship_id,),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return cur.rowcount
 
     def log_override(
         self,
         relationship_id: str,
-        cooldown_id: Optional[str],
+        cooldown_id: str | None,
         reason: str,
         timestamp: str,
     ) -> str:
         oid = _next_id(self, "OV", "override_log", "id")
-        self.conn.execute(  # type: ignore[union-attr]
-            "INSERT INTO override_log(id, relationship_id, cooldown_id, reason, timestamp) "
+        self._db.execute(
+            "INSERT INTO override_log("
+            "id, relationship_id, cooldown_id, reason, timestamp) "
             "VALUES (?,?,?,?,?)",
             (oid, relationship_id, cooldown_id, reason, timestamp),
         )
-        self.conn.commit()  # type: ignore[union-attr]
+        self._commit()
         return oid
 
-    def list_overrides(self, relationship_id: str) -> List[sqlite3.Row]:
-        return self.conn.execute(  # type: ignore[union-attr]
-            "SELECT * FROM override_log WHERE relationship_id=? ORDER BY timestamp",
-            (relationship_id,),
-        ).fetchall()
+    def list_overrides(self, relationship_id: str) -> list[OverrideLog]:
+        return [
+            self._row_to_override(r)
+            for r in self._db.execute(
+                "SELECT * FROM override_log WHERE relationship_id=? ORDER BY timestamp",
+                (relationship_id,),
+            ).fetchall()
+        ]
+
+    def _row_to_override(self, r: sqlite3.Row) -> OverrideLog:
+        return OverrideLog(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            cooldown_id=r["cooldown_id"],
+            reason=r["reason"],
+            timestamp=r["timestamp"],
+        )

@@ -17,6 +17,10 @@ love_risk.db
 # Tooling
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # WorkBuddy local workspace data (memory logs, session state)
 # Note: this ignores the folder for git — it is NOT deleted.

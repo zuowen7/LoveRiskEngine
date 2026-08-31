@@ -8,7 +8,10 @@ def test_signal_type_weights_ordering():
 
 def test_suggest_costly():
     assert suggest_signal_type("He introduced me to his parents") is SignalType.COSTLY
-    assert suggest_signal_type("she showed up on time and paid for dinner") is SignalType.COSTLY
+    assert (
+        suggest_signal_type("she showed up on time and paid for dinner")
+        is SignalType.COSTLY
+    )
 
 
 def test_suggest_cheap():
@@ -27,11 +30,18 @@ def test_suggest_no_marker_returns_none():
 
 def test_signal_type_roundtrip_through_storage(tmp_path):
     from love_risk_engine.storage.database import Database
+
     db = Database(str(tmp_path / "t.db"))
     db.init()
     rid = db.add_relationship("Alex")
     oid = db.add_observation(
-        rid, "x", "he paid", "i", "a", "self", 5.0,
+        rid,
+        "x",
+        "he paid",
+        "i",
+        "a",
+        "self",
+        5.0,
         signal_type=SignalType.COSTLY,
     )
     obs = db.get_observations(rid)

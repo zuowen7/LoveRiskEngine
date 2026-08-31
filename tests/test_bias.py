@@ -13,10 +13,17 @@ from love_risk_engine.core.state import EmotionalState, RelationshipState
 
 def _obs(ts, rationalization=False, inconsistency=False):
     return Observation(
-        id=f"O{ts}", relationship_id="R001", timestamp=f"2026-01-01T00:0{ts}:00",
-        category="x", observation="o", interpretation="i",
-        alternative_explanation="a", source="self", confidence=5.0,
-        rationalization=rationalization, inconsistency_flag=inconsistency,
+        id=f"O{ts}",
+        relationship_id="R001",
+        timestamp=f"2026-01-01T00:0{ts}:00",
+        category="x",
+        observation="o",
+        interpretation="i",
+        alternative_explanation="a",
+        source="self",
+        confidence=5.0,
+        rationalization=rationalization,
+        inconsistency_flag=inconsistency,
     )
 
 
@@ -45,8 +52,12 @@ def test_repeated_rationalization_fires():
 
 
 def test_repeated_rationalization_resets_on_gap():
-    obs = [_obs(1, rationalization=True), _obs(2, rationalization=True),
-           _obs(3, rationalization=False), _obs(4, rationalization=True)]
+    obs = [
+        _obs(1, rationalization=True),
+        _obs(2, rationalization=True),
+        _obs(3, rationalization=False),
+        _obs(4, rationalization=True),
+    ]
     assert repeated_rationalization(obs) is None
 
 

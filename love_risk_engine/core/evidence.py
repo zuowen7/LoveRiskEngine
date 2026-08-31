@@ -24,10 +24,10 @@ every observation as interchangeable. The composite is fully auditable:
 `status` prints every component so you can see exactly why exposure is or
 isn't supported.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from .observation import Observation
 from .signals import SignalType
@@ -44,10 +44,10 @@ class EvidenceSupport:
     observation_count: int
     distinct_sources: int
     with_alternative: int  # observations that recorded an alternative explanation
-    with_claims: int       # observations carrying >=1 structured claim
-    costly_count: int      # observations classified as COSTLY signal
-    cheap_count: int       # observations classified as CHEAP signal
-    support_units: float   # transparent composite, NOT a probability
+    with_claims: int  # observations carrying >=1 structured claim
+    costly_count: int  # observations classified as COSTLY signal
+    cheap_count: int  # observations classified as CHEAP signal
+    support_units: float  # transparent composite, NOT a probability
 
     @property
     def rigor_ratio(self) -> float:
@@ -67,7 +67,7 @@ def _confidence_weight(confidence: float) -> float:
     return 0.5 + (max(0.0, min(10.0, float(confidence))) / 10.0)
 
 
-def compute_evidence_support(observations: List[Observation]) -> EvidenceSupport:
+def compute_evidence_support(observations: list[Observation]) -> EvidenceSupport:
     n = len(observations)
     distinct_sources = len({o.source for o in observations})
     with_alt = sum(1 for o in observations if o.alternative_explanation.strip())

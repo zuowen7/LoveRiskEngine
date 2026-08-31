@@ -3,46 +3,55 @@
 Usage:
   lre init
   lre relationship add <alias>
-  lre observe <relationship> --observation "..." [--interpretation ...] [--alternative ...]
+  lre observe <relationship> --observation "..." [--interpretation ...]
+  lre observe <relationship> [--alternative ...] [--source ...]
   lre status <relationship>
   lre review <relationship>
   lre boundary add --description "..." [--severity HARD|SOFT]
   lre boundary hit <boundary_id> --relationship <rel> --evidence "..."
+  lre boundary retire <boundary_id>              # stop enforcing, keep audit trail
   lre list
-  lre state set <relationship> [--attraction N] [--trust N] [--uncertainty N] [--emotional STATE]
-  lre exposure set <relationship> [--time N] [--emotional N] [--privacy N] [--financial N] [--life-decision N]
+  lre state set <relationship> [--attraction N] [--trust N] [--uncertainty N]
+  lre state set <relationship> [--emotional STATE]
+  lre exposure set <relationship> [--time N] [--emotional N] [--privacy N]
+  lre exposure set <relationship> [--financial N] [--life-decision N]
   lre inconsistency add <relationship> --description "..."
-  lre inconsistency resolve <id> [--as sequential_change|genuine_inconsistency|dismissed] [--note "..."]
+  lre inconsistency resolve <id> [--note "..."]
+  lre inconsistency resolve <id> [--as sequential_change|dismissed|genuine]
   lre inconsistency list <relationship> [--resolved]
-  lre observe <relationship> --claim "relationship_status=single"   # structured claim
-  lre observe <relationship> --signal-type COSTLY                    # cheap-talk / costly-signal
+  lre observe <relationship> --claim "relationship_status=single"
+  lre observe <relationship> --signal-type COSTLY
   lre contradictions <relationship> [--save]    # auto-detect conflicting observations
   lre chat import <relationship> --file chat.txt [--rules claim_rules.json]
   lre timeline <relationship>                    # chronological event stream
   lre cooldown <relationship> [list|clear]       # precommitment guardrails
 """
+
 from __future__ import annotations
 
 import argparse
 import os
 import sys
-from typing import List, Optional
 
-from .core.contradiction import ContradictionCandidate, detect_contradictions
+from .core.bias_detector import BiasFinding
 from .core.chat_import import (
-    parse_file,
     load_claim_rules,
+    parse_file,
     to_observations,
 )
+from .core.contradiction import ContradictionCandidate, detect_contradictions
 from .core.cooldown import Cooldown, format_remaining, is_active
 from .core.decision import Decision
 from .core.evidence import EvidenceSupport
 from .core.exposure import Exposure
 from .core.hooks import ReviewContext
+from .core.inconsistency import Inconsistency
 from .core.observation import Claim
+from .core.relationship import Relationship
 from .core.signals import SignalType, suggest_signal_type
 from .core.state import EmotionalState, RelationshipState
 from .core.timeline import build_timeline, format_timeline
+from .core.timeutil import utc_now_iso
 from .services.review import analyze, build_context, run_review
 from .storage.database import Database
 
@@ -54,45 +63,25 @@ def get_db() -> Database:
     return db
 
 
-def resolve_relationship(db: Database, token: str):
-    row = db.get_relationship(token)
-    if row is None:
+def resolve_relationship(db: Database, token: str) -> Relationship:
+    rel = db.get_relationship(token)
+    if rel is None:
         sys.exit(f"Error: relationship not found: {token!r}")
-    return row
+    return rel
 
 
-def _utc_now_iso() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _row_to_cooldown(row) -> Cooldown:
-    return Cooldown(
-        id=row["id"],
-        relationship_id=row["relationship_id"],
-        decision=row["decision"],
-        reason=row["reason"],
-        started_at=row["started_at"],
-        expires_at=row["expires_at"],
-        active=bool(row["active"]),
-    )
-
-
-def _active_cooldowns(db: Database, rid: str):
-    """Return cooldown rows that are both flagged active AND not yet expired."""
-    now = _utc_now_iso()
-    out = []
-    for c in db.list_cooldowns(rid, active_only=True):
-        cd = _row_to_cooldown(c)
-        if is_active(cd, now=now):
-            out.append(c)
-    return out
+def _active_cooldowns(db: Database, rid: str) -> list[Cooldown]:
+    """Return cooldowns that are both flagged active AND not yet expired."""
+    now = utc_now_iso()
+    return [
+        c for c in db.list_cooldowns(rid, active_only=True) if is_active(c, now=now)
+    ]
 
 
 # ---------------------------------------------------------------------------
 # command handlers
 # ---------------------------------------------------------------------------
-def cmd_init(args: argparse.Namespace, db: Database) -> None:
+def cmd_init(_args: argparse.Namespace, db: Database) -> None:
     db.init()
     print(f"Initialized LoveRiskEngine database at {db.path}")
 
@@ -103,8 +92,8 @@ def cmd_relationship_add(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_observe(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    claims: List[Claim] = []
+    rel = resolve_relationship(db, args.relationship)
+    claims: list[Claim] = []
     for item in args.claim:
         if "=" not in item:
             sys.exit(f"Error: --claim must be attribute=value, got {item!r}")
@@ -125,7 +114,7 @@ def cmd_observe(args: argparse.Namespace, db: Database) -> None:
             )
 
     oid = db.add_observation(
-        row["id"],
+        rel.id,
         args.category,
         args.observation,
         args.interpretation,
@@ -140,44 +129,54 @@ def cmd_observe(args: argparse.Namespace, db: Database) -> None:
     extra = f" with {len(claims)} claim(s)" if claims else ""
     if signal_type is not SignalType.UNSPECIFIED:
         extra += f" [{signal_type.value}]"
-    print(f"Recorded observation {oid} for {row['id']}{extra}")
+    print(f"Recorded observation {oid} for {rel.id}{extra}")
 
 
-def _compute_status(db: Database, relationship_id: str):
+def _compute_status(
+    db: Database, relationship_id: str
+) -> tuple[ReviewContext, list[BiasFinding], Decision]:
     ctx = build_context(db, relationship_id)
     findings, decision = analyze(ctx)
     return ctx, findings, decision
 
 
 def cmd_status(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     ctx, findings, decision = _compute_status(db, rid)
     candidates = detect_contradictions(ctx.observations)
     candidates.sort(key=lambda c: (c.attribute, c.obs_a_id, c.obs_b_id))
     top = candidates[:3]
     acknowledged = db.acknowledged_inconsistencies(rid)
-    print(format_status(
-        rid, ctx.state, ctx.exposure, findings, decision,
-        ctx.inconsistency_count, ctx.evidence_support, top,
-        more_conflicts=len(candidates) > len(top),
-        acknowledged=acknowledged,
-    ))
+    print(
+        format_status(
+            rid,
+            ctx.state,
+            ctx.exposure,
+            findings,
+            decision,
+            ctx.inconsistency_count,
+            ctx.evidence_support,
+            top,
+            more_conflicts=len(candidates) > len(top),
+            acknowledged=acknowledged,
+        )
+    )
 
 
 def format_status(
     rid: str,
     state: RelationshipState,
     exposure: Exposure,
-    findings: List,
+    findings: list[BiasFinding],
     decision: Decision,
     inconsistency_count: int,
     evidence_support: EvidenceSupport,
-    contradictions: Optional[List[ContradictionCandidate]] = None,
+    contradictions: list[ContradictionCandidate] | None = None,
     more_conflicts: bool = False,
-    acknowledged: Optional[List] = None,
+    acknowledged: list[Inconsistency] | None = None,
 ) -> str:
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(f"Relationship: {rid}")
     lines.append("")
     lines.append(f"Attraction       {state.attraction:.1f} / 10")
@@ -213,7 +212,7 @@ def format_status(
         # breakdown by resolution type — keeps acknowledged items visible
         buckets: dict = {}
         for it in acknowledged:
-            res = it["resolution"] if "resolution" in it.keys() else "resolved"
+            res = it.resolution or "resolved"
             buckets[res] = buckets.get(res, 0) + 1
         parts = ", ".join(f"{v} {k}" for k, v in sorted(buckets.items()))
         lines.append(f"Acknowledged (closed): {len(acknowledged)} ({parts})")
@@ -234,9 +233,9 @@ def format_status(
 
 
 def cmd_review(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    review = run_review(db, row["id"])
-    print(f"Review {review.id} for {row['id']}")
+    rel = resolve_relationship(db, args.relationship)
+    review = run_review(db, rel.id)
+    print(f"Review {review.id} for {rel.id}")
     print(f"Recommendation: {review.recommendation}")
     print(f"Unresolved inconsistencies: {review.unresolved_inconsistencies}")
     print("Triggered hooks:")
@@ -262,31 +261,43 @@ def cmd_boundary_add(args: argparse.Namespace, db: Database) -> None:
 def cmd_boundary_hit(args: argparse.Namespace, db: Database) -> None:
     if db.get_boundary(args.boundary_id) is None:
         sys.exit(f"Error: boundary not found: {args.boundary_id!r}")
-    row = resolve_relationship(db, args.relationship)
-    hid = db.add_boundary_hit(args.boundary_id, row["id"], args.evidence)
-    print(f"Recorded boundary hit {hid} (boundary {args.boundary_id}, relationship {row['id']})")
+    rel = resolve_relationship(db, args.relationship)
+    hid = db.add_boundary_hit(args.boundary_id, rel.id, args.evidence)
+    print(
+        f"Recorded boundary hit {hid} "
+        f"(boundary {args.boundary_id}, relationship {rel.id})"
+    )
 
 
-def cmd_list(args: argparse.Namespace, db: Database) -> None:
+def cmd_boundary_retire(args: argparse.Namespace, db: Database) -> None:
+    if not db.deactivate_boundary(args.boundary_id):
+        sys.exit(f"Error: boundary not found: {args.boundary_id!r}")
+    print(
+        f"Retired boundary {args.boundary_id}. Past hits remain in the audit "
+        f"trail; `lre list` still shows it as inactive."
+    )
+
+
+def cmd_list(_args: argparse.Namespace, db: Database) -> None:
     rels = db.list_relationships()
     print("Relationships:")
     if not rels:
         print("  (none)")
     for r in rels:
-        print(f"  {r['id']}  {r['alias']}  [{r['status']}]")
+        print(f"  {r.id}  {r.alias}  [{r.status}]")
     print("")
     print("Boundaries:")
     bounds = db.list_boundaries(active_only=False)
     if not bounds:
         print("  (none)")
     for b in bounds:
-        flag = "ACTIVE" if b["active"] else "inactive"
-        print(f"  {b['id']}  [{b['severity']}] {b['description']} ({flag})")
+        flag = "ACTIVE" if b.active else "inactive"
+        print(f"  {b.id}  [{b.severity}] {b.description} ({flag})")
 
 
 def cmd_state_set(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     existing = db.get_state(rid) or RelationshipState(rid)
     if args.attraction is not None:
         existing.attraction = args.attraction
@@ -301,8 +312,8 @@ def cmd_state_set(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     existing = db.get_exposure(rid) or Exposure(rid)
     old_total = existing.total
     updates = {
@@ -323,25 +334,24 @@ def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
         active = _active_cooldowns(db, rid)
         if active:
             print("BLOCKED: an active cooldown prevents raising exposure.")
-            for c in active:
-                cd = _row_to_cooldown(c)
+            for cd in active:
                 print(
                     f"  - {cd.id} [{cd.decision}] {format_remaining(cd)} "
                     f"(reason: {cd.reason or 'n/a'})"
                 )
             print(
                 "To override (logged for audit): "
-                f"lre exposure set {args.relationship} ... --override --reason \"...\""
+                f'lre exposure set {args.relationship} ... --override --reason "..."'
             )
             return
     if args.override and new_total > old_total:
         active = _active_cooldowns(db, rid)
-        cd_id = active[0]["id"] if active else None
+        cd_id = active[0].id if active else None
         db.log_override(
             relationship_id=rid,
             cooldown_id=cd_id,
             reason=args.reason or "",
-            timestamp=_utc_now_iso(),
+            timestamp=utc_now_iso(),
         )
         print(
             f"OVERRIDE logged: raising exposure {old_total:.1f} -> {new_total:.1f} "
@@ -353,9 +363,9 @@ def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_inconsistency_add(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    iid = db.add_inconsistency(row["id"], args.description)
-    print(f"Recorded inconsistency {iid} for {row['id']}")
+    rel = resolve_relationship(db, args.relationship)
+    iid = db.add_inconsistency(rel.id, args.description)
+    print(f"Recorded inconsistency {iid} for {rel.id}")
 
 
 def cmd_inconsistency_resolve(args: argparse.Namespace, db: Database) -> None:
@@ -366,30 +376,27 @@ def cmd_inconsistency_resolve(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_inconsistency_list(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     items = db.list_inconsistencies(rid, resolved=args.resolved)
     label = "resolved" if args.resolved else "open"
     print(f"{label.capitalize()} inconsistencies for {rid}:")
     if not items:
         print("  (none)")
     for it in items:
-        kind = it["kind"] if "kind" in it.keys() else "manual"
-        head = f"  {it['id']} [{kind}] {it['description']}"
+        head = f"  {it.id} [{it.kind}] {it.description}"
         if args.resolved:
-            res = it["resolution"] if "resolution" in it.keys() else None
-            note = it["resolution_note"] if "resolution_note" in it.keys() else ""
-            tail = f" -> {res}" if res else ""
-            if note:
-                tail += f" | {note}"
+            tail = f" -> {it.resolution}" if it.resolution else ""
+            if it.resolution_note:
+                tail += f" | {it.resolution_note}"
             print(head + tail)
         else:
             print(head)
 
 
 def cmd_contradictions(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     observations = db.get_observations(rid)
     candidates = detect_contradictions(observations)
     if not candidates:
@@ -417,8 +424,8 @@ def cmd_contradictions(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_chat_import(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     try:
         messages = parse_file(args.file)
     except FileNotFoundError:
@@ -433,10 +440,7 @@ def cmd_chat_import(args: argparse.Namespace, db: Database) -> None:
     n = db.import_observations(rid, observations)
     claim_total = sum(len(o.claims) for o in observations)
     print(f"Imported {n} observation(s) from {args.file!r} into {rid}.")
-    print(
-        f"Extracted {claim_total} structured claim(s) "
-        f"via {len(rules)} rule(s)."
-    )
+    print(f"Extracted {claim_total} structured claim(s) via {len(rules)} rule(s).")
     # post-analysis: surface contradictions for the user to arbitrate
     all_obs = db.get_observations(rid)
     cands = detect_contradictions(all_obs)
@@ -450,8 +454,8 @@ def cmd_chat_import(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_timeline(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     observations = db.get_observations(rid)
     boundary_hits = db.list_boundary_hits(rid, only_hard=False)
     inconsistencies = db.list_all_inconsistencies(rid)
@@ -462,21 +466,19 @@ def cmd_timeline(args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
-    row = resolve_relationship(db, args.relationship)
-    rid = row["id"]
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
     if args.sub == "clear":
         n = db.clear_cooldowns(rid)
         print(f"Cleared {n} active cooldown(s) for {rid}.")
         return
     # default: list
-    now = _utc_now_iso()
-    active = [c for c in db.list_cooldowns(rid, active_only=True)
-              if is_active(_row_to_cooldown(c), now=now)]
+    now = utc_now_iso()
+    active = _active_cooldowns(db, rid)
     print(f"Active cooldowns for {rid}:")
     if not active:
         print("  (none)")
-    for c in active:
-        cd = _row_to_cooldown(c)
+    for cd in active:
         print(
             f"  {cd.id} [{cd.decision}] {format_remaining(cd, now=now)} "
             f"(reason: {cd.reason or 'n/a'})"
@@ -485,7 +487,7 @@ def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
     if overrides:
         print(f"Override history ({len(overrides)}):")
         for ov in overrides:
-            print(f"  {ov['id']} {ov['timestamp']} | {ov['reason'] or '(no reason)'}")
+            print(f"  {ov.id} {ov.timestamp} | {ov.reason or '(no reason)'}")
 
 
 # ---------------------------------------------------------------------------
@@ -546,8 +548,12 @@ def build_parser() -> argparse.ArgumentParser:
     pb_hit.add_argument("boundary_id")
     pb_hit.add_argument("--relationship", required=True)
     pb_hit.add_argument("--evidence", required=True)
+    pb_retire = pb_sub.add_parser(
+        "retire", help="Retire a boundary (kept for audit, no longer enforced)"
+    )
+    pb_retire.add_argument("boundary_id")
 
-    pl = sub.add_parser("list", help="List relationships and boundaries")
+    sub.add_parser("list", help="List relationships and boundaries")
 
     pst = sub.add_parser("state", help="Set relationship state")
     pst_sub = pst.add_subparsers(dest="sub", required=True)
@@ -556,9 +562,7 @@ def build_parser() -> argparse.ArgumentParser:
     pst_set.add_argument("--attraction", type=float)
     pst_set.add_argument("--trust", type=float)
     pst_set.add_argument("--uncertainty", type=float)
-    pst_set.add_argument(
-        "--emotional", choices=[e.name for e in EmotionalState]
-    )
+    pst_set.add_argument("--emotional", choices=[e.name for e in EmotionalState])
 
     pe = sub.add_parser("exposure", help="Set exposure")
     pe_sub = pe.add_subparsers(dest="sub", required=True)
@@ -602,7 +606,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     pc = sub.add_parser(
-        "contradictions", help="Detect conflicting structured claims across observations"
+        "contradictions",
+        help="Detect conflicting structured claims across observations",
     )
     pc.add_argument("relationship")
     pc.add_argument(
@@ -615,7 +620,9 @@ def build_parser() -> argparse.ArgumentParser:
     pchat_sub = pchat.add_subparsers(dest="sub", required=True)
     pimp = pchat_sub.add_parser("import", help="Import a local chat export")
     pimp.add_argument("relationship")
-    pimp.add_argument("--file", required=True, help="Path to NDJSON or delimited chat file")
+    pimp.add_argument(
+        "--file", required=True, help="Path to NDJSON or delimited chat file"
+    )
     pimp.add_argument(
         "--rules",
         default=None,
@@ -623,7 +630,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pimp.add_argument("--category", default="chat")
 
-    ptl = sub.add_parser("timeline", help="Chronological event stream for a relationship")
+    ptl = sub.add_parser(
+        "timeline", help="Chronological event stream for a relationship"
+    )
     ptl.add_argument("relationship")
 
     pcd = sub.add_parser("cooldown", help="Manage cooldowns / precommitment guardrails")
@@ -645,7 +654,11 @@ DISPATCH = {
     "observe": cmd_observe,
     "status": cmd_status,
     "review": cmd_review,
-    "boundary": {"add": cmd_boundary_add, "hit": cmd_boundary_hit},
+    "boundary": {
+        "add": cmd_boundary_add,
+        "hit": cmd_boundary_hit,
+        "retire": cmd_boundary_retire,
+    },
     "list": cmd_list,
     "state": {"set": cmd_state_set},
     "exposure": {"set": cmd_exposure_set},
@@ -661,7 +674,7 @@ DISPATCH = {
 }
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     db = get_db()
@@ -669,6 +682,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         handler = DISPATCH[args.command]
         if isinstance(handler, dict):
             handler = handler[args.sub]
+        else:
+            assert callable(handler)
         handler(args, db)
     finally:
         db.close()

@@ -5,6 +5,7 @@ Design principle #5 (Hard boundaries):
   but only when there is recorded evidence (a BoundaryHit). The engine never
   auto-convicts the other person from a single vague observation.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

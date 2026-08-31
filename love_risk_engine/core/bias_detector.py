@@ -11,10 +11,10 @@ We have no real likelihood / calibration data in v0.1, so these are
 deliberately simple, explainable heuristics. They will be replaced by the
 roadmap's calibration / Bayesian work later.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 from .evidence import EvidenceSupport
 from .exposure import Exposure
@@ -22,9 +22,9 @@ from .observation import Observation
 from .state import RelationshipState
 
 # --- tunable (uncalibrated) thresholds ---
-ATTRACTION_TRUST_GAP = 3.0          # attraction - trust >= this is a gap worth flagging
-MIN_OBSERVATIONS_FOR_TRUST = 3      # fewer observations => trust is "unsupported"
-RATIONALIZATION_RUN = 3             # N consecutive rationalizations
+ATTRACTION_TRUST_GAP = 3.0  # attraction - trust >= this is a gap worth flagging
+MIN_OBSERVATIONS_FOR_TRUST = 3  # fewer observations => trust is "unsupported"
+RATIONALIZATION_RUN = 3  # N consecutive rationalizations
 
 
 @dataclass
@@ -32,12 +32,12 @@ class BiasFinding:
     rule_id: str
     message: str
     severity: int  # 0 info, 1 low, 2, 3 medium, 4 high, 5 critical
-    proposed_decision: Optional[str] = None
+    proposed_decision: str | None = None
 
 
 def attraction_exceeds_trust(
-    state: RelationshipState, observations: List[Observation]
-) -> Optional[BiasFinding]:
+    state: RelationshipState, observations: list[Observation]
+) -> BiasFinding | None:
     """Rule #1: attraction high but trust has no supporting evidence yet."""
     if (
         state.attraction - state.trust >= ATTRACTION_TRUST_GAP
@@ -54,8 +54,8 @@ def attraction_exceeds_trust(
 
 
 def repeated_rationalization(
-    observations: List[Observation],
-) -> Optional[BiasFinding]:
+    observations: list[Observation],
+) -> BiasFinding | None:
     """Rule #2: consecutive self-serving explanations of anomalies."""
     best_run = run = 0
     for obs in sorted(observations, key=lambda o: o.timestamp):
@@ -108,7 +108,8 @@ def exposure_outpaces_evidence(
         f"Exposure remains within evidence support "
         f"({support.support_units:.1f} units; "
         f"{support.with_alternative}/{support.observation_count} with alternative "
-        f"explanations, {support.with_claims}/{support.observation_count} with claims).",
+        f"explanations, "
+        f"{support.with_claims}/{support.observation_count} with claims).",
         severity=0,
         proposed_decision=None,
     )
@@ -116,7 +117,7 @@ def exposure_outpaces_evidence(
 
 def high_emotion_major_decision(
     state: RelationshipState, exposure: Exposure
-) -> Optional[BiasFinding]:
+) -> BiasFinding | None:
     """Rule #4: impaired judgement while a major decision is on the table."""
     if state.emotional_state.is_high and exposure.life_decision > 0:
         return BiasFinding(
@@ -128,7 +129,7 @@ def high_emotion_major_decision(
     return None
 
 
-def unresolved_inconsistencies(count: int) -> Optional[BiasFinding]:
+def unresolved_inconsistencies(count: int) -> BiasFinding | None:
     """Rule #5: unresolved major inconsistencies."""
     if count > 0:
         return BiasFinding(

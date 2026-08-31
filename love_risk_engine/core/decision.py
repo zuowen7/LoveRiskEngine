@@ -7,15 +7,15 @@ Design principle #4 (Default action is CONTINUE_OBSERVING):
   EXIT is reserved for recorded hard-boundary hits with evidence - the engine
   will not invent an EXIT on its own.
 """
+
 from __future__ import annotations
 
-from enum import Enum
-from typing import List
+from enum import StrEnum
 
 from .bias_detector import BiasFinding
 
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     CONTINUE_OBSERVING = "CONTINUE_OBSERVING"
     WAIT = "WAIT"
     PAUSE = "PAUSE"
@@ -24,7 +24,7 @@ class Decision(str, Enum):
 
 
 # Most-severe first. Used to pick the single recommendation.
-_PRIORITY: List[Decision] = [
+_PRIORITY: list[Decision] = [
     Decision.EXIT,
     Decision.PAUSE,
     Decision.DECREASE_EXPOSURE,
@@ -33,17 +33,11 @@ _PRIORITY: List[Decision] = [
 ]
 
 
-def decide(
-    findings: List[BiasFinding], has_hard_boundary_hit: bool
-) -> Decision:
+def decide(findings: list[BiasFinding], has_hard_boundary_hit: bool) -> Decision:
     if has_hard_boundary_hit:
         return Decision.EXIT
 
-    proposed = [
-        Decision(f.proposed_decision)
-        for f in findings
-        if f.proposed_decision
-    ]
+    proposed = [Decision(f.proposed_decision) for f in findings if f.proposed_decision]
     for decision in _PRIORITY:
         if decision in proposed:
             return decision

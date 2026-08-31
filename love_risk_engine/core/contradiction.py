@@ -13,11 +13,11 @@ Design choices (honest, privacy-first, no pseudoscience):
     are exactly the kind of thing the user must arbitrate, so surfacing them
     is correct behavior, not a false positive to be hidden.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List
 
 from .observation import Observation
 
@@ -37,11 +37,11 @@ def normalize_attribute(attr: str) -> str:
 
 
 def detect_contradictions(
-    observations: List[Observation],
-) -> List[ContradictionCandidate]:
+    observations: list[Observation],
+) -> list[ContradictionCandidate]:
     """Return every conflicting claim pair across the given observations."""
     # attribute -> value -> [observation ids]
-    by_attr: Dict[str, Dict[str, List[str]]] = {}
+    by_attr: dict[str, dict[str, list[str]]] = {}
     for o in observations:
         for c in o.claims:
             attr = normalize_attribute(c.attribute)
@@ -50,7 +50,7 @@ def detect_contradictions(
                 continue
             by_attr.setdefault(attr, {}).setdefault(val, []).append(o.id)
 
-    candidates: List[ContradictionCandidate] = []
+    candidates: list[ContradictionCandidate] = []
     for attr, val_map in by_attr.items():
         vals = sorted(val_map.keys())
         for i in range(len(vals)):
