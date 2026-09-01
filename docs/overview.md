@@ -80,7 +80,7 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
   `core/profiles.py`, schema v2): seven kinds select a frozen profile of ordinal
   bands (power asymmetry / exit cost), promise windows, boundary seeds and voice.
   Ordinals are context, never numbers — `status` prints them and the engine never
-  derives replies from them. See `PROPOSAL_relationship_kinds.md`.
+  derives replies from them. See `proposals/PROPOSAL_relationship_kinds.md`.
 - **Promise-expiry detector** (S2: `core/promises.py` + `lre promises`):
   future-directed `--claim` values that go untouched past the kind's promise
   window surface as a `WAIT` warning listing claim, observation id, date and age;

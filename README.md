@@ -1,4 +1,4 @@
-# LoveRiskEngine (v0.1)
+# LoveRiskEngine
 
 A **personal relationship decision-support framework**. It helps you record
 observations, audit your own cognitive biases, track risk exposure, and trigger
@@ -29,7 +29,7 @@ incomplete information.
 5. **Hard boundaries** — you pre-commit your own lines. A hit can suggest
    `EXIT` **only when backed by recorded evidence**; a single vague observation
    never auto-convicts.
-6. **Bias auditing** — v0.1 ships 5 detectors (see below).
+6. **Bias auditing** — ships 8 detectors (see below).
 7. **Privacy first** — local SQLite only, no unnecessary PII, no scraping or
    locating interfaces.
 
@@ -125,7 +125,7 @@ The bands are ordinals (`HIGH / MED / LOW`), never numbers, and the engine
 never uses them to coach a reply. Change a kind with
 `lre relationship set <id> --kind KIND`.
 
-## v0.1 bias detectors (deliberately uncalibrated heuristics)
+## Bias detectors (deliberately uncalibrated heuristics)
 
 | Rule | Trigger |
 |------|---------|
@@ -138,8 +138,9 @@ never uses them to coach a reply. Change a kind with
 | `rapid_exposure_escalation` | exposure +≥3 points within 2 days **and** zero new observations in that window (needs the v3 history log) |
 | `promise_expiry` | windowed kinds only: future-directed `--claim` untouched past the promise window |
 
-> These thresholds are **placeholders**, not calibrated likelihoods. v0.1 does
-> **not** produce pseudo-precise scores like "trustworthiness 87.34%".
+> These thresholds are **placeholders**, not calibrated likelihoods. This
+> engine does **not** produce pseudo-precise scores like "trustworthiness
+> 87.34%".
 
 ## Evidence support (quality-calibrated, replaces the raw observation count)
 
@@ -358,26 +359,29 @@ pytest
 
 ```
 love_risk_engine/
-  core/          domain model + bias detectors + decision engine + contradiction
-                 tracker + evidence support (quality-calibrated) + cheap/costly
-                 signal classification + love-bombing pattern detector +
-                 cooldown/precommitment + timeline + offline chat import
-  storage/       SQLite schema + database access
+  core/          domain model + decision engine + detectors (bias rules,
+                 love-bombing, cheap/costly signals, promise expiry, rapid
+                 exposure escalation) + contradiction tracker + evidence
+                 support + relationship profiles + change history + timeline
+                 + cooldown/precommitment + offline chat import
+  storage/       SQLite schema (versioned migrations) + database access
   services/      review workflow (auto-creates cooldowns on blocking decisions)
   cli.py         command-line interface
 examples/        sample claim-rules.json for chat import
 tests/
+docs/            design system, audit & architecture reports, implementation
+                 overview, and the proposals/ record of every shipped slice
 ```
 
-## Future roadmap (NOT in v0.1)
+## Roadmap
 
 Implemented: ✅ contradiction tracker, ✅ evidence-support (quality-calibrated),
 ✅ cheap-talk/costly-signal classification, ✅ love-bombing pattern detector,
 ✅ contradiction resolution UX, ✅ cooldown/precommitment guardrails,
-✅ timeline view, ✅ local chat import & analysis, ✅ top-conflicts in `status`.
+✅ timeline view, ✅ local chat import & analysis, ✅ top-conflicts in `status`,
+✅ relationship kinds & per-kind profiles, ✅ promise expiry, ✅ exit-cost
+sensitivity, ✅ state/exposure change history, ✅ rapid exposure escalation.
 
-Still pending: counterfactual review, RedTeamMe, LLM Devil's Advocate, model
-calibration report, relationship backtesting, Bayesian updater, value of
-information, real-option / optimal stopping model, mutual verification
-checklist, public-information consistency check (legal public sources only),
-state/exposure change history (for a continuous timeline trace).
+The canonical, reviewed roadmap and target architecture live in
+`docs/ARCHITECTURE_AND_PLAN.md`; the current-state audit (strengths, debt,
+gaps) lives in `docs/AUDIT_REPORT.md`.
