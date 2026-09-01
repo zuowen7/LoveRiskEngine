@@ -1,4 +1,5 @@
 from love_risk_engine.core.bias_detector import (
+    Sensitivity,
     attraction_exceeds_trust,
     exposure_outpaces_evidence,
     high_emotion_major_decision,
@@ -100,3 +101,41 @@ def test_high_emotion_no_major_decision_silent():
 def test_unresolved_inconsistencies():
     assert unresolved_inconsistencies(2).severity == 3
     assert unresolved_inconsistencies(0) is None
+
+
+# ---------------------------------------------------------------------------
+# exit-cost sensitivity (relationship-kinds proposal, S3)
+# ---------------------------------------------------------------------------
+
+
+def test_attraction_high_exit_cost_fires_earlier():
+    st = RelationshipState("R001", attraction=8.5, trust=6)  # gap 2.5
+    obs = [_obs(1)]  # fewer than MIN_OBSERVATIONS_FOR_TRUST
+    assert attraction_exceeds_trust(st, obs) is None  # NORMAL: 2.5 < 3.0
+    f = attraction_exceeds_trust(st, obs, sensitivity=Sensitivity.HIGH_EXIT_COST)
+    assert f is not None
+    assert f.rule_id == "attraction_exceeds_trust"
+
+
+def test_attraction_shifted_message_states_threshold():
+    st = RelationshipState("R001", attraction=8.5, trust=6)
+    f = attraction_exceeds_trust(st, [_obs(1)], sensitivity=Sensitivity.HIGH_EXIT_COST)
+    assert "gap threshold 2.0" in f.message
+    assert "exit-cost sensitive" in f.message
+
+
+def test_attraction_normal_message_unchanged():
+    st = RelationshipState("R001", attraction=9, trust=3)
+    f = attraction_exceeds_trust(st, [_obs(1)])
+    assert "exit-cost" not in f.message
+    assert f.message.startswith(
+        "Attraction (9.0) significantly exceeds supported trust (3.0)."
+    )
+
+
+def test_rationalization_high_exit_cost_fires_earlier():
+    obs = [_obs(1, rationalization=True), _obs(2, rationalization=True)]
+    assert repeated_rationalization(obs) is None  # NORMAL: needs a run of 3
+    f = repeated_rationalization(obs, sensitivity=Sensitivity.HIGH_EXIT_COST)
+    assert f is not None
+    assert "run threshold 2" in f.message

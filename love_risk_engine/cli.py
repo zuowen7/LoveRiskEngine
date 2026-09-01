@@ -2,7 +2,8 @@
 
 Usage:
   lre init
-  lre relationship add <alias>
+  lre relationship add <alias> [--kind KIND]
+  lre relationship set <id> --kind KIND
   lre observe <relationship> --observation "..." [--interpretation ...]
   lre observe <relationship> [--alternative ...] [--source ...]
   lre status <relationship>
@@ -22,6 +23,8 @@ Usage:
   lre observe <relationship> --claim "relationship_status=single"
   lre observe <relationship> --signal-type COSTLY
   lre contradictions <relationship> [--save]    # auto-detect conflicting observations
+  lre promises <relationship>                    # promise claims and their ages
+  lre history <relationship>                     # state/exposure change log
   lre chat import <relationship> --file chat.txt [--rules claim_rules.json]
   lre timeline <relationship>                    # chronological event stream
   lre cooldown <relationship> [list|clear]       # precommitment guardrails
@@ -44,10 +47,13 @@ from .core.cooldown import Cooldown, format_remaining, is_active
 from .core.decision import Decision
 from .core.evidence import EvidenceSupport
 from .core.exposure import Exposure
+from .core.history import describe_exposure_change, describe_state_change
 from .core.hooks import ReviewContext
 from .core.inconsistency import Inconsistency
 from .core.observation import Claim
-from .core.relationship import Relationship
+from .core.profiles import RelationshipProfile, get_profile
+from .core.promises import PromiseReport, collect_promises
+from .core.relationship import Kind, Relationship
 from .core.signals import SignalType, suggest_signal_type
 from .core.state import EmotionalState, RelationshipState
 from .core.timeline import build_timeline, format_timeline
@@ -70,6 +76,23 @@ def resolve_relationship(db: Database, token: str) -> Relationship:
     return rel
 
 
+def _profile_context(profile: RelationshipProfile) -> str | None:
+    """One-line ordinal context for non-default kinds; None for LOVER.
+
+    Shown by both `status` and `review`: the band values are context for the
+    user's judgement, never input to a formula.
+    """
+    if profile.kind is Kind.LOVER:
+        return None
+    parts = [
+        f"power asymmetry: {profile.power_asymmetry.value}",
+        f"exit cost: {profile.exit_cost.value}",
+    ]
+    if profile.voice:
+        parts.append(profile.voice)
+    return " | ".join(parts)
+
+
 def _active_cooldowns(db: Database, rid: str) -> list[Cooldown]:
     """Return cooldowns that are both flagged active AND not yet expired."""
     now = utc_now_iso()
@@ -87,8 +110,19 @@ def cmd_init(_args: argparse.Namespace, db: Database) -> None:
 
 
 def cmd_relationship_add(args: argparse.Namespace, db: Database) -> None:
-    rid = db.add_relationship(args.alias)
-    print(f"Created relationship {rid} (alias: {args.alias})")
+    rid = db.add_relationship(args.alias, kind=args.kind)
+    print(f"Created relationship {rid} (alias: {args.alias}, kind: {args.kind})")
+    seeds = get_profile(args.kind).boundary_seeds
+    if seeds:
+        print("Suggested boundaries for this kind (add only what matches you):")
+        for seed in seeds:
+            print(f"  - {seed}")
+
+
+def cmd_relationship_set(args: argparse.Namespace, db: Database) -> None:
+    if not db.set_relationship_kind(args.id, args.kind):
+        sys.exit(f"Error: relationship not found: {args.id!r}")
+    print(f"Set kind {args.kind} for {args.id}")
 
 
 def cmd_observe(args: argparse.Namespace, db: Database) -> None:
@@ -148,6 +182,9 @@ def cmd_status(args: argparse.Namespace, db: Database) -> None:
     candidates.sort(key=lambda c: (c.attribute, c.obs_a_id, c.obs_b_id))
     top = candidates[:3]
     acknowledged = db.acknowledged_inconsistencies(rid)
+    promises = None
+    if ctx.profile.promise_window_days is not None:
+        promises = collect_promises(ctx.observations, ctx.profile.promise_window_days)
     print(
         format_status(
             rid,
@@ -160,6 +197,9 @@ def cmd_status(args: argparse.Namespace, db: Database) -> None:
             top,
             more_conflicts=len(candidates) > len(top),
             acknowledged=acknowledged,
+            kind=rel.kind,
+            profile=ctx.profile,
+            promises=promises,
         )
     )
 
@@ -175,9 +215,17 @@ def format_status(
     contradictions: list[ContradictionCandidate] | None = None,
     more_conflicts: bool = False,
     acknowledged: list[Inconsistency] | None = None,
+    kind: str | None = None,
+    profile: RelationshipProfile | None = None,
+    promises: PromiseReport | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append(f"Relationship: {rid}")
+    if kind is not None and profile is not None:
+        lines.append(f"Kind             {kind}")
+        context = _profile_context(profile)
+        if context:
+            lines.append("Context          " + context)
     lines.append("")
     lines.append(f"Attraction       {state.attraction:.1f} / 10")
     lines.append(f"Trust            {state.trust:.1f} / 10")
@@ -226,6 +274,19 @@ def format_status(
             )
         if more_conflicts:
             lines.append("  ...run `lre contradictions <rel> --save` to persist all.")
+    if promises is not None and (promises.within or promises.expired):
+        lines.append("")
+        lines.append(f"Promises (window: {promises.window_days}d)")
+        for p in promises.within:
+            lines.append(
+                f"  {p.attribute}={p.value!r} ({p.observation_id}, "
+                f"{p.timestamp[:10]}, {p.age_days}d)"
+            )
+        if promises.expired:
+            lines.append(
+                f"Older promises ({len(promises.expired)}): "
+                "run `lre promises <rel>` for details."
+            )
     lines.append("")
     lines.append("Recommendation:")
     lines.append(decision.value)
@@ -234,8 +295,12 @@ def format_status(
 
 def cmd_review(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
+    profile = get_profile(rel.kind)
     review = run_review(db, rel.id)
     print(f"Review {review.id} for {rel.id}")
+    context = _profile_context(profile)
+    if context:
+        print(f"Context: {context}")
     print(f"Recommendation: {review.recommendation}")
     print(f"Unresolved inconsistencies: {review.unresolved_inconsistencies}")
     print("Triggered hooks:")
@@ -284,7 +349,7 @@ def cmd_list(_args: argparse.Namespace, db: Database) -> None:
     if not rels:
         print("  (none)")
     for r in rels:
-        print(f"  {r.id}  {r.alias}  [{r.status}]")
+        print(f"  {r.id}  {r.alias}  [{r.status}]  {r.kind}")
     print("")
     print("Boundaries:")
     bounds = db.list_boundaries(active_only=False)
@@ -423,6 +488,34 @@ def cmd_contradictions(args: argparse.Namespace, db: Database) -> None:
         )
 
 
+def cmd_promises(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    profile = get_profile(rel.kind)
+    if profile.promise_window_days is None:
+        print(f"Kind {rel.kind} does not track a promise window.")
+        return
+    observations = db.get_observations(rel.id)
+    report = collect_promises(observations, profile.promise_window_days)
+    if not report.within and not report.expired:
+        print("No promise claims recorded.")
+        return
+    print(f"Promises for {rel.id} (window: {report.window_days}d):")
+    if report.within:
+        print("Within window:")
+        for p in report.within:
+            print(
+                f"  - {p.attribute}={p.value!r} ({p.observation_id}, "
+                f"{p.timestamp[:10]}, {p.age_days}d)"
+            )
+    if report.expired:
+        print(f"Expired ({len(report.expired)}):")
+        for p in report.expired:
+            print(
+                f"  - {p.attribute}={p.value!r} ({p.observation_id}, "
+                f"{p.timestamp[:10]}, {p.age_days}d)"
+            )
+
+
 def cmd_chat_import(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     rid = rel.id
@@ -460,9 +553,52 @@ def cmd_timeline(args: argparse.Namespace, db: Database) -> None:
     boundary_hits = db.list_boundary_hits(rid, only_hard=False)
     inconsistencies = db.list_all_inconsistencies(rid)
     reviews = db.list_reviews(rid)
-    events = build_timeline(observations, boundary_hits, inconsistencies, reviews)
+    events = build_timeline(
+        observations,
+        boundary_hits,
+        inconsistencies,
+        reviews,
+        state_changes=db.list_state_history(rid),
+        exposure_changes=db.list_exposure_history(rid),
+    )
     print(f"Timeline for {rid} ({len(events)} event(s)):")
     print(format_timeline(events))
+
+
+def cmd_history(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    rid = rel.id
+    merged: list[tuple[str, str, str]] = []  # (timestamp, id, line)
+
+    prev_state = None
+    for sc in db.list_state_history(rid):
+        merged.append(
+            (
+                sc.timestamp,
+                sc.id,
+                f"[STATE]    {sc.id} {describe_state_change(prev_state, sc)}",
+            )
+        )
+        prev_state = sc
+
+    prev_exposure = None
+    for ec in db.list_exposure_history(rid):
+        merged.append(
+            (
+                ec.timestamp,
+                ec.id,
+                f"[EXPOSURE] {ec.id} {describe_exposure_change(prev_exposure, ec)}",
+            )
+        )
+        prev_exposure = ec
+
+    if not merged:
+        print("No state or exposure changes recorded yet.")
+        return
+    merged.sort(key=lambda entry: (entry[0], entry[1]))
+    print(f"History for {rid}:")
+    for ts, _id, line in merged:
+        print(f"{ts[:16]}  {line}")
 
 
 def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
@@ -506,6 +642,20 @@ def build_parser() -> argparse.ArgumentParser:
     pa_sub = pa.add_subparsers(dest="sub", required=True)
     pa_add = pa_sub.add_parser("add", help="Add a relationship")
     pa_add.add_argument("alias")
+    pa_add.add_argument(
+        "--kind",
+        choices=[k.name for k in Kind],
+        default=Kind.LOVER.name,
+        help="Relationship kind; selects the evaluation profile (default: LOVER)",
+    )
+    pa_set = pa_sub.add_parser("set", help="Change a relationship's kind")
+    pa_set.add_argument("id")
+    pa_set.add_argument(
+        "--kind",
+        required=True,
+        choices=[k.name for k in Kind],
+        help="Relationship kind; selects the evaluation profile",
+    )
 
     po = sub.add_parser("observe", help="Record an observation")
     po.add_argument("relationship")
@@ -616,6 +766,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Persist new contradictions as inconsistencies (idempotent)",
     )
 
+    pp = sub.add_parser(
+        "promises", help="List promise claims and their ages for a relationship"
+    )
+    pp.add_argument("relationship")
+
+    ph = sub.add_parser("history", help="State/exposure change log for a relationship")
+    ph.add_argument("relationship")
+
     pchat = sub.add_parser("chat", help="Local chat import & analysis (offline)")
     pchat_sub = pchat.add_subparsers(dest="sub", required=True)
     pimp = pchat_sub.add_parser("import", help="Import a local chat export")
@@ -650,7 +808,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 DISPATCH = {
     "init": cmd_init,
-    "relationship": {"add": cmd_relationship_add},
+    "relationship": {"add": cmd_relationship_add, "set": cmd_relationship_set},
     "observe": cmd_observe,
     "status": cmd_status,
     "review": cmd_review,
@@ -668,6 +826,8 @@ DISPATCH = {
         "list": cmd_inconsistency_list,
     },
     "contradictions": cmd_contradictions,
+    "promises": cmd_promises,
+    "history": cmd_history,
     "chat": {"import": cmd_chat_import},
     "timeline": cmd_timeline,
     "cooldown": cmd_cooldown,

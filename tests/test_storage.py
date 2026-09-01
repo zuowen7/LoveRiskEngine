@@ -1,3 +1,4 @@
+import pytest
 from love_risk_engine.core.exposure import Exposure
 from love_risk_engine.core.state import EmotionalState, RelationshipState
 from love_risk_engine.storage.database import Database
@@ -106,4 +107,58 @@ def test_boundary_hit_requires_evidence(tmp_path):
     assert len(hits) == 1
     assert hits[0].id == hid
     assert hits[0].evidence == "they mocked my boundary on call"
+    db.close()
+
+
+# ---------------------------------------------------------------------------
+# relationship kinds (relationship-kinds proposal, S1)
+# ---------------------------------------------------------------------------
+
+
+def test_relationship_kind_defaults_to_lover(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    db.add_relationship("Alex")
+    assert db.get_relationship("Alex").kind == "LOVER"
+    db.close()
+
+
+def test_add_relationship_stores_kind(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    db.add_relationship("Mentor", kind="MENTOR")
+    assert db.get_relationship("Mentor").kind == "MENTOR"
+    db.close()
+
+
+def test_add_relationship_rejects_unknown_kind(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    with pytest.raises(ValueError):
+        db.add_relationship("Alex", kind="BESTIE")
+    db.close()
+
+
+def test_set_relationship_kind_updates(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    assert db.set_relationship_kind(rid, "BOSS") is True
+    assert db.get_relationship(rid).kind == "BOSS"
+    db.close()
+
+
+def test_set_relationship_kind_unknown_relationship(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    assert db.set_relationship_kind("R999", "BOSS") is False
+    db.close()
+
+
+def test_set_relationship_kind_rejects_unknown_kind(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    with pytest.raises(ValueError):
+        db.set_relationship_kind(rid, "SIDEKICK")
     db.close()

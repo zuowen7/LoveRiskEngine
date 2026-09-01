@@ -16,14 +16,15 @@ matching `_migrate_vN_to_vN1` step in `storage/database.py`. Never renumber an
 existing version — databases in the wild are already stamped with it.
 """
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS relationships (
     id          TEXT PRIMARY KEY,
     alias       TEXT NOT NULL,
     status      TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'LOVER'
 );
 
 CREATE TABLE IF NOT EXISTS observations (
@@ -58,6 +59,29 @@ CREATE TABLE IF NOT EXISTS exposure (
     privacy         REAL NOT NULL DEFAULT 0.0,
     financial       REAL NOT NULL DEFAULT 0.0,
     life_decision   REAL NOT NULL DEFAULT 0.0,
+    FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+);
+
+CREATE TABLE IF NOT EXISTS state_history (
+    id              TEXT PRIMARY KEY,
+    relationship_id  TEXT NOT NULL,
+    timestamp        TEXT NOT NULL,
+    attraction       REAL NOT NULL,
+    trust            REAL NOT NULL,
+    uncertainty      REAL NOT NULL,
+    emotional_state  TEXT NOT NULL,
+    FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+);
+
+CREATE TABLE IF NOT EXISTS exposure_history (
+    id              TEXT PRIMARY KEY,
+    relationship_id  TEXT NOT NULL,
+    timestamp        TEXT NOT NULL,
+    time             REAL NOT NULL,
+    emotional        REAL NOT NULL,
+    privacy          REAL NOT NULL,
+    financial        REAL NOT NULL,
+    life_decision    REAL NOT NULL,
     FOREIGN KEY (relationship_id) REFERENCES relationships(id)
 );
 

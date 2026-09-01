@@ -87,6 +87,7 @@ def test_legacy_database_gains_new_columns(tmp_path):
         rel = db.get_relationship("R001")
         assert rel is not None
         assert rel.alias == "Alex"
+        assert rel.kind == "LOVER"  # column default back-filled
         items = db.list_inconsistencies("R001", resolved=False)
         assert [i.id for i in items] == ["I001"]
         assert items[0].kind == "manual"  # column default back-filled
@@ -96,6 +97,7 @@ def test_legacy_database_gains_new_columns(tmp_path):
 
     assert _version(path) == SCHEMA_VERSION
     assert "signal_type" in _columns(path, "observations")
+    assert "kind" in _columns(path, "relationships")
     assert {"kind", "attribute", "resolution", "resolution_note"} <= _columns(
         path, "inconsistencies"
     )
@@ -148,3 +150,66 @@ def test_migration_runs_once_on_legacy_open(tmp_path):
     finally:
         Database._migrate_v0_to_v1 = original
     assert calls == [1]
+
+
+def test_v1_database_gains_relationship_kind(tmp_path):
+    """A database stamped v1 (no relationships.kind) upgrades to v2.
+
+    The v1→v2 step must not depend on the v0→v1 back-fill: a database stamped
+    v1 skips the v0 work entirely, so this test pins the v1→v2 path on its own.
+    """
+    path = str(tmp_path / "v1.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_SCHEMA)
+    conn.execute("PRAGMA user_version = 1")
+    conn.execute(
+        "INSERT INTO relationships VALUES ('R001','Sam','ACTIVE','2026-01-01T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+    assert "kind" not in _columns(path, "relationships")
+
+    db = Database(path)
+    try:
+        db.init()
+        rel = db.get_relationship("R001")
+        assert rel is not None
+        assert rel.kind == "LOVER"
+    finally:
+        db.close()
+
+    assert _version(path) == SCHEMA_VERSION
+    assert "kind" in _columns(path, "relationships")
+
+
+def test_v2_database_gains_history_tables(tmp_path):
+    """A database stamped v2 (no history tables) upgrades to v3.
+
+    The v2→v3 step only creates the history tables — it must not depend on
+    earlier back-fills, so this test stamps v2 and pins the v2→v3 path alone.
+    """
+    path = str(tmp_path / "v2.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE relationships ("
+        "id TEXT PRIMARY KEY, alias TEXT NOT NULL, status TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'LOVER');"
+    )
+    conn.execute("PRAGMA user_version = 2")
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    try:
+        db.init()
+    finally:
+        db.close()
+
+    assert _version(path) == SCHEMA_VERSION
+    tables = {
+        r[0]
+        for r in sqlite3.connect(path)
+        .execute("SELECT name FROM sqlite_master WHERE type='table'")
+        .fetchall()
+    }
+    assert {"state_history", "exposure_history"} <= tables

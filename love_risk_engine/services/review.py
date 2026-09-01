@@ -19,6 +19,8 @@ from ..core.evidence import EvidenceSupport, compute_evidence_support
 from ..core.exposure import Exposure
 from ..core.hooks import ReviewContext, run_hooks
 from ..core.observation import Observation
+from ..core.profiles import PROFILES, get_profile
+from ..core.relationship import Kind
 from ..core.review import Review
 from ..core.state import RelationshipState
 from ..core.timeutil import expires_utc_iso, utc_now_iso
@@ -37,9 +39,12 @@ def _next_review_id(db: Database) -> str:
 
 def build_context(db: Database, relationship_id: str) -> ReviewContext:
     """Assemble the data needed for a review from the database."""
+    rel = db.get_relationship(relationship_id)
+    profile = get_profile(rel.kind) if rel else PROFILES[Kind.LOVER]
     state = db.get_state(relationship_id) or RelationshipState(relationship_id)
     exposure = db.get_exposure(relationship_id) or Exposure(relationship_id)
     observations: list[Observation] = db.get_observations(relationship_id)
+    exposure_history = db.list_exposure_history(relationship_id)
     inconsistencies = db.list_inconsistencies(relationship_id, resolved=False)
     hard_hits = db.list_boundary_hits(relationship_id, only_hard=True)
     support: EvidenceSupport = compute_evidence_support(observations)
@@ -50,6 +55,8 @@ def build_context(db: Database, relationship_id: str) -> ReviewContext:
         inconsistency_count=len(inconsistencies),
         hard_boundary_hit=len(hard_hits) > 0,
         evidence_support=support,
+        profile=profile,
+        exposure_history=exposure_history,
     )
 
 

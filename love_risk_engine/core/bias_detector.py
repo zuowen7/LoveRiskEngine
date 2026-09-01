@@ -15,16 +15,34 @@ roadmap's calibration / Bayesian work later.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from .evidence import EvidenceSupport
 from .exposure import Exposure
 from .observation import Observation
 from .state import RelationshipState
 
+
+class Sensitivity(StrEnum):
+    """How sensitively a thresholded detector fires (relationship kinds, S3).
+
+    NORMAL is today's behavior. HIGH_EXIT_COST shifts the two rules with clean
+    scalar thresholds toward earlier warning — the user who cannot easily
+    leave needs to know sooner, not later. Ordinals map to this in `run_hooks`;
+    the shifted threshold is always printed in the finding message so the
+    basis stays auditable (DESIGN.md Do's #3).
+    """
+
+    NORMAL = "NORMAL"
+    HIGH_EXIT_COST = "HIGH_EXIT_COST"
+
+
 # --- tunable (uncalibrated) thresholds ---
 ATTRACTION_TRUST_GAP = 3.0  # attraction - trust >= this is a gap worth flagging
+ATTRACTION_TRUST_GAP_HIGH_EXIT_COST = 2.0  # earlier warning under HIGH exit cost
 MIN_OBSERVATIONS_FOR_TRUST = 3  # fewer observations => trust is "unsupported"
 RATIONALIZATION_RUN = 3  # N consecutive rationalizations
+RATIONALIZATION_RUN_HIGH_EXIT_COST = 2  # earlier warning under HIGH exit cost
 
 
 @dataclass
@@ -36,17 +54,29 @@ class BiasFinding:
 
 
 def attraction_exceeds_trust(
-    state: RelationshipState, observations: list[Observation]
+    state: RelationshipState,
+    observations: list[Observation],
+    sensitivity: Sensitivity = Sensitivity.NORMAL,
 ) -> BiasFinding | None:
     """Rule #1: attraction high but trust has no supporting evidence yet."""
+    gap = (
+        ATTRACTION_TRUST_GAP_HIGH_EXIT_COST
+        if sensitivity is Sensitivity.HIGH_EXIT_COST
+        else ATTRACTION_TRUST_GAP
+    )
     if (
-        state.attraction - state.trust >= ATTRACTION_TRUST_GAP
+        state.attraction - state.trust >= gap
         and len(observations) < MIN_OBSERVATIONS_FOR_TRUST
     ):
+        message = (
+            f"Attraction ({state.attraction:.1f}) significantly exceeds "
+            f"supported trust ({state.trust:.1f})"
+        )
+        if sensitivity is Sensitivity.HIGH_EXIT_COST:
+            message += f" (exit-cost sensitive: gap threshold {gap:.1f})"
         return BiasFinding(
             "attraction_exceeds_trust",
-            f"Attraction ({state.attraction:.1f}) significantly exceeds "
-            f"supported trust ({state.trust:.1f}).",
+            message + ".",
             severity=2,
             proposed_decision="CONTINUE_OBSERVING",
         )
@@ -55,8 +85,14 @@ def attraction_exceeds_trust(
 
 def repeated_rationalization(
     observations: list[Observation],
+    sensitivity: Sensitivity = Sensitivity.NORMAL,
 ) -> BiasFinding | None:
     """Rule #2: consecutive self-serving explanations of anomalies."""
+    threshold = (
+        RATIONALIZATION_RUN_HIGH_EXIT_COST
+        if sensitivity is Sensitivity.HIGH_EXIT_COST
+        else RATIONALIZATION_RUN
+    )
     best_run = run = 0
     for obs in sorted(observations, key=lambda o: o.timestamp):
         if obs.rationalization:
@@ -64,10 +100,13 @@ def repeated_rationalization(
             best_run = max(best_run, run)
         else:
             run = 0
-    if best_run >= RATIONALIZATION_RUN:
+    if best_run >= threshold:
+        message = f"{best_run} consecutive rationalizations detected"
+        if sensitivity is Sensitivity.HIGH_EXIT_COST:
+            message += f" (exit-cost sensitive: run threshold {threshold})"
         return BiasFinding(
             "repeated_rationalization",
-            f"{best_run} consecutive rationalizations detected.",
+            message + ".",
             severity=3,
             proposed_decision="CONTINUE_OBSERVING",
         )

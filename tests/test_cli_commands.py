@@ -788,3 +788,328 @@ def test_cooldown_list_shows_an_active_cooldown(run, cooled_down):
     out = run("cooldown", "Alex")
     assert "C001 [EXIT]" in out
     assert "remaining" in out
+
+
+# ---------------------------------------------------------------------------
+# relationship kinds (relationship-kinds proposal, S1)
+# ---------------------------------------------------------------------------
+
+
+def test_relationship_add_accepts_a_kind(run, db_path):
+    run("init")
+    out = run("relationship", "add", "Mentor", "--kind", "MENTOR")
+    assert "kind: MENTOR" in out
+    assert "MENTOR" in run("list")
+
+
+def test_relationship_add_defaults_to_lover(run, db_path):
+    run("init")
+    out = run("relationship", "add", "Alex")
+    assert "kind: LOVER" in out
+
+
+def test_relationship_set_changes_kind(run, seeded):
+    assert "Set kind MENTOR for R001" in run(
+        "relationship", "set", "R001", "--kind", "MENTOR"
+    )
+    assert "MENTOR" in run("list")
+
+
+def test_relationship_set_rejects_unknown_relationship(run, db_path):
+    run("init")
+    with pytest.raises(SystemExit) as exc:
+        run("relationship", "set", "R999", "--kind", "MENTOR")
+    assert "relationship not found" in str(exc.value)
+
+
+def test_status_shows_kind_without_context_for_default(run, seeded):
+    out = run("status", "Alex")
+    assert "Kind             LOVER" in out
+    assert "Context" not in out
+
+
+def test_status_shows_ordinal_context_for_non_default_kind(run, seeded):
+    run("relationship", "set", "R001", "--kind", "BOSS")
+    out = run("status", "Alex")
+    assert "Kind             BOSS" in out
+    assert "power asymmetry: HIGH" in out
+    assert "exit cost: HIGH" in out
+    assert "verify promises before escalating" in out
+
+
+def test_status_context_line_omits_empty_voice(run, seeded):
+    """A non-default profile with no voice text must not print a trailing '|'."""
+    run("relationship", "set", "R001", "--kind", "FRIEND")
+    out = run("status", "Alex")
+    assert "Context          power asymmetry: LOW | exit cost: LOW" in out
+
+
+# ---------------------------------------------------------------------------
+# promise expiry (relationship-kinds proposal, S2)
+# ---------------------------------------------------------------------------
+
+
+def _days_ago_iso(days: int) -> str:
+    from datetime import UTC, datetime, timedelta
+
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def _patch_clock(monkeypatch, days: int) -> None:
+    """Stamp subsequent observations `days` in the past.
+
+    `observe` timestamps via `storage.database._now`; the promise detector
+    reads the real clock, so this makes promise ages CLI-controllable.
+    """
+    import love_risk_engine.storage.database as database
+
+    monkeypatch.setattr(database, "_now", lambda: _days_ago_iso(days))
+
+
+def test_status_shows_promise_section_for_windowed_kind(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "promised funding",
+        "--claim",
+        "funding=will fund the project",
+    )
+    _patch_clock(monkeypatch, 10)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "promised a rec letter",
+        "--claim",
+        "rec=will recommend me",
+    )
+    out = run("status", "Alex")
+    assert "Promises (window: 90d)" in out
+    assert "rec='will recommend me'" in out
+    assert "Older promises (1):" in out
+    assert "lre promises" in out
+
+
+def test_status_omits_promise_section_for_lover_kind(run, seeded, monkeypatch):
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "promised funding",
+        "--claim",
+        "funding=will fund the project",
+    )
+    out = run("status", "Alex")
+    assert "Promises (window" not in out
+
+
+def test_status_promise_section_within_only(run, seeded, monkeypatch):
+    """Only in-window promises: section renders, no 'Older promises' line."""
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    _patch_clock(monkeypatch, 10)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "promised a rec letter",
+        "--claim",
+        "rec=will recommend me",
+    )
+    out = run("status", "Alex")
+    assert "Promises (window: 90d)" in out
+    assert "Older promises" not in out
+
+
+def test_promises_command_lists_within_and_expired(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "BOSS")
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "old promise",
+        "--claim",
+        "funding=will fund",
+    )
+    _patch_clock(monkeypatch, 10)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "fresh promise",
+        "--claim",
+        "rec=will recommend",
+    )
+    out = run("promises", "Alex")
+    assert "Promises for R001 (window: 90d):" in out
+    assert "Within window:" in out
+    assert "rec='will recommend'" in out
+    assert "Expired (1):" in out
+    assert "funding='will fund'" in out
+
+
+def test_promises_command_reports_no_window_kind(run, seeded):
+    out = run("promises", "Alex")
+    assert "Kind LOVER does not track a promise window." in out
+
+
+def test_promises_command_reports_empty(run, seeded):
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    out = run("promises", "Alex")
+    assert "No promise claims recorded." in out
+
+
+def test_promises_command_within_only(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "BOSS")
+    _patch_clock(monkeypatch, 10)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "fresh promise",
+        "--claim",
+        "rec=will recommend",
+    )
+    out = run("promises", "Alex")
+    assert "Within window:" in out
+    assert "Expired" not in out
+
+
+def test_promises_command_expired_only(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "BOSS")
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "old promise",
+        "--claim",
+        "funding=will fund",
+    )
+    out = run("promises", "Alex")
+    assert "Expired (1):" in out
+    assert "Within window:" not in out
+
+
+def test_review_fires_promise_expiry_for_mentor(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "old promise",
+        "--claim",
+        "funding=will fund",
+    )
+    out = run("review", "Alex")
+    assert "promise_expiry" in out
+
+
+def test_review_does_not_fire_promise_expiry_for_lover(run, seeded, monkeypatch):
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "old promise",
+        "--claim",
+        "funding=will fund",
+    )
+    out = run("review", "Alex")
+    assert "promise_expiry" not in out
+
+
+# ---------------------------------------------------------------------------
+# sensitivity direction, boundary seeds, review context (S3)
+# ---------------------------------------------------------------------------
+
+
+def test_boss_status_fires_earlier_attraction_warning(run, seeded):
+    run("state", "set", "Alex", "--attraction", "8.5", "--trust", "6")
+    run("observe", "Alex", "--observation", "first date went well")
+    out = run("status", "Alex")
+    assert "exit-cost sensitive" not in out  # LOVER: gap 2.5 < 3.0 -> silent
+
+    run("relationship", "set", "R001", "--kind", "BOSS")
+    out = run("status", "Alex")
+    assert "exit-cost sensitive" in out
+    assert "gap threshold 2.0" in out
+
+
+def test_review_prints_context_line_for_non_default_kind(run, seeded):
+    out = run("review", "Alex")
+    assert "Context" not in out  # LOVER stays quiet
+
+    run("relationship", "set", "R001", "--kind", "BOSS")
+    out = run("review", "Alex")
+    assert "Context: power asymmetry: HIGH | exit cost: HIGH" in out
+    assert "verify promises before escalating" in out
+
+
+def test_relationship_add_suggests_seed_boundaries(run, db_path):
+    run("init")
+    out = run("relationship", "add", "Mom", "--kind", "PARENT")
+    assert "Suggested boundaries for this kind" in out
+    assert "respects my decisions about my own life" in out
+
+    out = run("relationship", "add", "Alex")
+    assert "Suggested boundaries" not in out
+
+
+# ---------------------------------------------------------------------------
+# state/exposure change history (roadmap item #1)
+# ---------------------------------------------------------------------------
+
+
+def test_history_command_lists_changes_with_deltas(run, seeded):
+    run("state", "set", "Alex", "--attraction", "7.5", "--trust", "4")
+    run("state", "set", "Alex", "--attraction", "8.5")
+    run("exposure", "set", "Alex", "--time", "1", "--emotional", "2")
+    run("exposure", "set", "Alex", "--time", "3")
+    out = run("history", "Alex")
+    assert "History for R001:" in out
+    assert "[STATE]" in out
+    assert "baseline: attraction 7.5" in out
+    assert "attraction 7.5 -> 8.5" in out
+    assert "[EXPOSURE]" in out
+    assert "total 3.0 -> 5.0" in out
+
+
+def test_history_command_reports_empty(run, seeded):
+    out = run("history", "Alex")
+    assert "No state or exposure changes recorded yet." in out
+
+
+def test_timeline_includes_state_and_exposure_events(run, seeded):
+    run("state", "set", "Alex", "--attraction", "7.5")
+    run("state", "set", "Alex", "--attraction", "8.5")
+    run("exposure", "set", "Alex", "--time", "2")
+    out = run("timeline", "Alex")
+    assert "[state]" in out
+    assert "[exposure]" in out
+    assert "attraction 7.5 -> 8.5" in out
+
+
+# ---------------------------------------------------------------------------
+# rapid exposure escalation (roadmap #1 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_status_warns_on_rapid_exposure_without_evidence(run, seeded):
+    run("exposure", "set", "Alex", "--time", "1")
+    run("exposure", "set", "Alex", "--time", "4")
+    out = run("status", "Alex")
+    assert "Exposure grew 3.0 points in the last 2 days (1.0 -> 4.0)" in out
+    assert "no new observations recorded" in out
+
+
+def test_review_fires_rapid_exposure_escalation(run, seeded):
+    run("exposure", "set", "Alex", "--time", "1")
+    run("exposure", "set", "Alex", "--time", "4")
+    out = run("review", "Alex")
+    assert "rapid_exposure_escalation" in out

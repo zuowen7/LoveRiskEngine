@@ -1,4 +1,5 @@
 from love_risk_engine.core.boundaries import BoundaryHit
+from love_risk_engine.core.history import ExposureChange, StateChange
 from love_risk_engine.core.inconsistency import Inconsistency
 from love_risk_engine.core.observation import Observation
 from love_risk_engine.core.review import Review
@@ -70,6 +71,31 @@ def test_observations_appear_with_signal_tag():
     assert len(events) == 2
     assert "[COSTLY]" in events[0].label
     assert "[CHEAP]" in events[1].label
+
+
+def test_observation_flags_and_claims_render():
+    from love_risk_engine.core.observation import Claim
+
+    obs = [
+        Observation(
+            id="O001",
+            relationship_id="R001",
+            timestamp="2026-01-01T10:00:00",
+            category="signal",
+            observation="obs",
+            interpretation="i",
+            alternative_explanation="alt",
+            source="self",
+            confidence=5.0,
+            rationalization=True,
+            inconsistency_flag=True,
+            claims=[Claim("relationship_status", "single")],
+        )
+    ]
+    events = build_timeline(obs, [], [], [])
+    assert "rationalization" in events[0].label
+    assert "inconsistency_flag" in events[0].label
+    assert "claims: relationship_status=single" in events[0].detail
 
 
 def test_events_sorted_chronologically():
@@ -145,3 +171,62 @@ def test_resolved_inconsistency_shows_resolution():
     events = build_timeline([], [], incs, [])
     assert "genuine_inconsistency" in events[0].detail
     assert "red flag" in events[0].detail
+
+
+# ---------------------------------------------------------------------------
+# state/exposure change history (roadmap item #1)
+# ---------------------------------------------------------------------------
+
+
+def _state_change(idx=1, attraction=7.5):
+    return StateChange(
+        id=f"SH{idx:03d}",
+        relationship_id="R001",
+        timestamp=f"2026-01-{idx:02d}T12:00:00",
+        attraction=attraction,
+        trust=4.0,
+        uncertainty=2.0,
+        emotional_state="CALM",
+    )
+
+
+def _exposure_change(idx=1, time=1.0):
+    return ExposureChange(
+        id=f"EH{idx:03d}",
+        relationship_id="R001",
+        timestamp=f"2026-01-{idx:02d}T13:00:00",
+        time=time,
+        emotional=2.0,
+        privacy=0.0,
+        financial=0.0,
+        life_decision=0.0,
+    )
+
+
+def test_state_and_exposure_events_appear_with_deltas():
+    events = build_timeline(
+        [],
+        [],
+        [],
+        [],
+        state_changes=[_state_change(1, 7.5), _state_change(2, 8.5)],
+        exposure_changes=[_exposure_change(1, 1.0), _exposure_change(2, 3.0)],
+    )
+    # Fixture timestamps interleave: state at 12:00, exposure at 13:00 each day.
+    kinds = [e.kind for e in events]
+    assert kinds == ["state", "exposure", "state", "exposure"]
+    assert "attraction 7.5 -> 8.5" in events[2].label
+    assert "total 3.0 -> 5.0" in events[3].label
+
+
+def test_timeline_baseline_rows_marked():
+    events = build_timeline(
+        [],
+        [],
+        [],
+        [],
+        state_changes=[_state_change(1)],
+        exposure_changes=[_exposure_change(1)],
+    )
+    assert "baseline:" in events[0].label
+    assert "baseline:" in events[1].label

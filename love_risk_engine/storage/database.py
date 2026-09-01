@@ -22,10 +22,11 @@ from datetime import UTC, datetime
 from ..core.boundaries import Boundary, BoundaryHit
 from ..core.cooldown import Cooldown
 from ..core.exposure import Exposure
+from ..core.history import ExposureChange, StateChange
 from ..core.inconsistency import Inconsistency
 from ..core.observation import Claim, Observation
 from ..core.override import OverrideLog
-from ..core.relationship import Relationship
+from ..core.relationship import Kind, Relationship
 from ..core.review import Review
 from ..core.signals import SignalType
 from ..core.state import EmotionalState, RelationshipState
@@ -41,7 +42,22 @@ _ALLOWED_IDENTIFIERS = {
     ("inconsistencies", "id"),
     ("cooldowns", "id"),
     ("override_log", "id"),
+    ("state_history", "id"),
+    ("exposure_history", "id"),
 }
+
+_VALID_KINDS = frozenset(k.value for k in Kind)
+
+
+def _validate_kind(kind: str) -> None:
+    """Allow-list relationship kinds before they reach the database.
+
+    `kind` is stored as TEXT; anything outside the enum is rejected at write
+    time so no garbage can enter through the CLI (same rationale as
+    `_ALLOWED_IDENTIFIERS`).
+    """
+    if kind not in _VALID_KINDS:
+        raise ValueError(f"unknown relationship kind: {kind!r}")
 
 
 def _now() -> str:
@@ -177,6 +193,10 @@ class Database:
             # declares every column) or one written before versioning existed.
             # The back-fill is idempotent and covers both; it runs exactly once.
             self._migrate_v0_to_v1()
+        if version < 2:
+            self._migrate_v1_to_v2()
+        if version < 3:
+            self._migrate_v2_to_v3()
         self._set_user_version(SCHEMA_VERSION)
 
     def _migrate_v0_to_v1(self) -> None:
@@ -223,6 +243,55 @@ class Database:
             if col not in inc_cols:
                 self._db.execute(f"ALTER TABLE inconsistencies ADD COLUMN {col} {ddl}")
 
+    def _migrate_v1_to_v2(self) -> None:
+        """Add `relationships.kind` (relationship-kinds proposal, S1).
+
+        Existing rows back-fill to 'LOVER', which equals today's behavior
+        exactly. Runs for databases stamped v1, and for fresh v0 ones right
+        after the v0→v1 back-fill; both paths are idempotent.
+        """
+        cols = {
+            r[1]
+            for r in self._db.execute("PRAGMA table_info(relationships)").fetchall()
+        }
+        if "kind" not in cols:
+            self._db.execute(
+                "ALTER TABLE relationships ADD COLUMN kind "
+                "TEXT NOT NULL DEFAULT 'LOVER'"
+            )
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Create the state/exposure history tables (roadmap item #1).
+
+        No backfill: the upsert-based past left no trace, so history starts at
+        the first change after this migration — stated honestly, not hidden.
+        """
+        self._db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS state_history (
+                id              TEXT PRIMARY KEY,
+                relationship_id  TEXT NOT NULL,
+                timestamp        TEXT NOT NULL,
+                attraction       REAL NOT NULL,
+                trust            REAL NOT NULL,
+                uncertainty      REAL NOT NULL,
+                emotional_state  TEXT NOT NULL,
+                FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+            );
+            CREATE TABLE IF NOT EXISTS exposure_history (
+                id              TEXT PRIMARY KEY,
+                relationship_id  TEXT NOT NULL,
+                timestamp        TEXT NOT NULL,
+                time             REAL NOT NULL,
+                emotional        REAL NOT NULL,
+                privacy          REAL NOT NULL,
+                financial        REAL NOT NULL,
+                life_decision    REAL NOT NULL,
+                FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+            );
+            """
+        )
+
     def __enter__(self) -> Database:
         self.init()
         return self
@@ -236,14 +305,31 @@ class Database:
         self.close()
 
     # --- relationships ---
-    def add_relationship(self, alias: str, status: str = "ACTIVE") -> str:
+    def add_relationship(
+        self, alias: str, status: str = "ACTIVE", kind: str = Kind.LOVER.value
+    ) -> str:
+        _validate_kind(kind)
         rid = _next_id(self, "R", "relationships", "id")
         self._db.execute(
-            "INSERT INTO relationships(id, alias, status, created_at) VALUES (?,?,?,?)",
-            (rid, alias, status, _now()),
+            "INSERT INTO relationships(id, alias, status, created_at, kind) "
+            "VALUES (?,?,?,?,?)",
+            (rid, alias, status, _now(), kind),
         )
         self._commit()
         return rid
+
+    def set_relationship_kind(self, relationship_id: str, kind: str) -> bool:
+        """Change a relationship's kind. Returns False if unknown.
+
+        The kind is an attribute of the relationship, not a global switch —
+        there is deliberately no `lre mode` command that would imply one.
+        """
+        _validate_kind(kind)
+        cur = self._db.execute(
+            "UPDATE relationships SET kind=? WHERE id=?", (kind, relationship_id)
+        )
+        self._commit()
+        return cur.rowcount > 0
 
     def get_relationship(self, token: str) -> Relationship | None:
         row = self._db.execute(
@@ -262,7 +348,11 @@ class Database:
 
     def _row_to_relationship(self, r: sqlite3.Row) -> Relationship:
         return Relationship(
-            id=r["id"], alias=r["alias"], status=r["status"], created_at=r["created_at"]
+            id=r["id"],
+            alias=r["alias"],
+            status=r["status"],
+            created_at=r["created_at"],
+            kind=r["kind"],
         )
 
     # --- observations ---
@@ -376,6 +466,7 @@ class Database:
     # --- state ---
     def upsert_state(self, state: RelationshipState) -> None:
         state.clamp()
+        previous = self.get_state(state.relationship_id)
         self._db.execute(
             "INSERT INTO relationship_state("
             "relationship_id, attraction, trust, uncertainty, emotional_state) "
@@ -392,7 +483,53 @@ class Database:
                 state.emotional_state.value,
             ),
         )
+        if previous is None or self._state_changed(previous, state):
+            sid = _next_id(self, "SH", "state_history", "id")
+            self._db.execute(
+                "INSERT INTO state_history("
+                "id, relationship_id, timestamp, attraction, trust, "
+                "uncertainty, emotional_state) VALUES (?,?,?,?,?,?,?)",
+                (
+                    sid,
+                    state.relationship_id,
+                    _now(),
+                    state.attraction,
+                    state.trust,
+                    state.uncertainty,
+                    state.emotional_state.value,
+                ),
+            )
         self._commit()
+
+    @staticmethod
+    def _state_changed(previous: RelationshipState, current: RelationshipState) -> bool:
+        return (
+            previous.attraction != current.attraction
+            or previous.trust != current.trust
+            or previous.uncertainty != current.uncertainty
+            or previous.emotional_state != current.emotional_state
+        )
+
+    def list_state_history(self, relationship_id: str) -> list[StateChange]:
+        return [
+            self._row_to_state_change(r)
+            for r in self._db.execute(
+                "SELECT * FROM state_history WHERE relationship_id=? "
+                "ORDER BY timestamp, id",
+                (relationship_id,),
+            ).fetchall()
+        ]
+
+    def _row_to_state_change(self, r: sqlite3.Row) -> StateChange:
+        return StateChange(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            timestamp=r["timestamp"],
+            attraction=r["attraction"],
+            trust=r["trust"],
+            uncertainty=r["uncertainty"],
+            emotional_state=r["emotional_state"],
+        )
 
     def get_state(self, relationship_id: str) -> RelationshipState | None:
         r = self._db.execute(
@@ -412,6 +549,7 @@ class Database:
     # --- exposure ---
     def upsert_exposure(self, exposure: Exposure) -> None:
         exposure.clamp()
+        previous = self.get_exposure(exposure.relationship_id)
         self._db.execute(
             "INSERT INTO exposure("
             "relationship_id, time, emotional, privacy, financial, life_decision) "
@@ -429,7 +567,56 @@ class Database:
                 exposure.life_decision,
             ),
         )
+        if previous is None or self._exposure_changed(previous, exposure):
+            eid = _next_id(self, "EH", "exposure_history", "id")
+            self._db.execute(
+                "INSERT INTO exposure_history("
+                "id, relationship_id, timestamp, time, emotional, privacy, "
+                "financial, life_decision) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    eid,
+                    exposure.relationship_id,
+                    _now(),
+                    exposure.time,
+                    exposure.emotional,
+                    exposure.privacy,
+                    exposure.financial,
+                    exposure.life_decision,
+                ),
+            )
         self._commit()
+
+    @staticmethod
+    def _exposure_changed(previous: Exposure, current: Exposure) -> bool:
+        return (
+            previous.time != current.time
+            or previous.emotional != current.emotional
+            or previous.privacy != current.privacy
+            or previous.financial != current.financial
+            or previous.life_decision != current.life_decision
+        )
+
+    def list_exposure_history(self, relationship_id: str) -> list[ExposureChange]:
+        return [
+            self._row_to_exposure_change(r)
+            for r in self._db.execute(
+                "SELECT * FROM exposure_history WHERE relationship_id=? "
+                "ORDER BY timestamp, id",
+                (relationship_id,),
+            ).fetchall()
+        ]
+
+    def _row_to_exposure_change(self, r: sqlite3.Row) -> ExposureChange:
+        return ExposureChange(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            timestamp=r["timestamp"],
+            time=r["time"],
+            emotional=r["emotional"],
+            privacy=r["privacy"],
+            financial=r["financial"],
+            life_decision=r["life_decision"],
+        )
 
     def get_exposure(self, relationship_id: str) -> Exposure | None:
         r = self._db.execute(

@@ -76,10 +76,38 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
   boundary hits, inconsistencies (with resolution), and reviews into one chronological
   stream grouped by day. Honest about scope: state/exposure are upserted (no history), so
   the timeline shows only timestamped events, not a continuous score trace.
+- **Relationship kinds & per-kind profiles** (S1: `core/relationship.py` `Kind` +
+  `core/profiles.py`, schema v2): seven kinds select a frozen profile of ordinal
+  bands (power asymmetry / exit cost), promise windows, boundary seeds and voice.
+  Ordinals are context, never numbers — `status` prints them and the engine never
+  derives replies from them. See `PROPOSAL_relationship_kinds.md`.
+- **Promise-expiry detector** (S2: `core/promises.py` + `lre promises`):
+  future-directed `--claim` values that go untouched past the kind's promise
+  window surface as a `WAIT` warning listing claim, observation id, date and age;
+  re-mentions restart the window, later non-future values hand off to the
+  contradiction tracker, malformed timestamps fail open. Display windowing only —
+  nothing is ever deleted.
+- **Exit-cost sensitivity** (S3): `PARENT / BOSS / MENTOR` shift the two
+  clean-threshold rules earlier (`attraction_exceeds_trust` gap 3.0→2.0,
+  `repeated_rationalization` run 3→2); every shifted threshold is printed in the
+  finding message (DESIGN.md Do's #3). Boundary seeds print as *suggestions* on
+  relationship creation — never auto-created.
+- **State/exposure change history** (roadmap #1: schema v3, `core/history.py`,
+  `lre history`): `upsert_state` / `upsert_exposure` record a snapshot row on
+  every change — baseline included, no-op writes record nothing, blocked writes
+  leave no trace. `lre history <rel>` shows the merged change log with
+  `old -> new` deltas; the timeline renders `[state]` / `[exposure]` events.
+  No backfill — the pre-v3 upsert past left no trace, stated honestly.
+- **Rapid exposure escalation detector** (`core/escalation.py`, roadmap #1
+  follow-up): fires when total exposure grows ≥3 points within 2 days while
+  zero new observations arrive in the same window — the pairing the history
+  log makes visible. Baseline carries forward from the last snapshot at or
+  before the window; the finding (PAUSE, severity 3) states window, delta and
+  baseline. Universal across all kinds; un-datable rows fail open.
 
 ## Test results
 
-`pytest` → **165 passed**. Branch coverage **98%**; `cli.py` at **100%**
+`pytest` → **248 passed**. Branch coverage **99%**; `cli.py` at **100%**
 (statement and branch). Coverage floor enforced at **95%** in both
 `pyproject.toml` (`fail_under`) and CI.
 
@@ -190,10 +218,11 @@ Two rules worth internalising, both learned the hard way:
 
 ## Next 3 most valuable steps
 
-1. **State / exposure change history** — currently upserted (last-write-wins), so the
-   timeline can't show score deltas. An event log would make the timeline a true
-   continuous trace and enable "exposure grew 3 points in 2 days while evidence grew 0"
-   detection.
+1. ~~**State / exposure change history**~~ — **implemented** (schema v3
+   snapshot-on-change log, `lre history`, timeline deltas), and the detector it
+   enables — ~~**rapid exposure escalation**~~ ("exposure grew 3 points in 2
+   days while evidence grew 0") — is **also implemented** on top of it
+   (`core/escalation.py`, PAUSE, universal across kinds).
 2. **Counterfactual review / RedTeamMe** — re-run a past decision against only the
    evidence available at that time, to audit whether you would have decided differently
    (and whether your current self is rationalizing the past).

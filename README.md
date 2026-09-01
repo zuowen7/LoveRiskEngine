@@ -45,6 +45,7 @@ pip install -e ".[dev]"
 ```bash
 lre init
 lre relationship add "Alex"
+lre relationship add "Dr. Mentor" --kind MENTOR  # kinds tune the evaluation profile
 lre observe Alex --category honesty \
     --observation "Cancelled our plans twice this week" \
     --interpretation "They are losing interest" \
@@ -58,6 +59,8 @@ lre inconsistency add Alex --description "Story about Tuesday differs from Wedne
 lre observe Alex --observation "He said he is single" --claim "relationship_status=single"
 lre observe Alex --observation "He mentioned his wife" --claim "relationship_status=married"
 lre contradictions Alex --save     # auto-flag conflicting claims
+lre promises Alex                  # promise claims & ages (windowed kinds)
+lre history Alex                   # state/exposure change log
 lre status Alex
 lre review Alex
 lre list
@@ -67,6 +70,7 @@ lre list
 
 ```
 Relationship: R001
+Kind             LOVER
 
 Attraction       8.5 / 10
 Trust            4.0 / 10
@@ -101,6 +105,26 @@ Recommendation:
 CONTINUE_OBSERVING
 ```
 
+### Relationship kinds
+
+`lre relationship add <alias> --kind KIND` tags a relationship with one of
+`LOVER / FRIEND / PARENT / BOSS / MENTOR / COLLEAGUE / STRANGER` (default
+`LOVER`). The kind selects a *profile*:
+
+- **display context** — power-asymmetry and exit-cost bands, printed by
+  `status` and `review` as context for your own judgement;
+- **a promise window** (90 days) for `BOSS / MENTOR / COLLEAGUE` — structured
+  `--claim` promises that go untouched past it surface as a `WAIT` warning
+  and in the `Promises` block of `status`; `lre promises <rel>` shows all of
+  them with ages;
+- **earlier warnings** when exit cost is `HIGH` (`PARENT / BOSS / MENTOR`) —
+  the attraction-gap and rationalization-run thresholds shift, and the
+  warning states the shifted value.
+
+The bands are ordinals (`HIGH / MED / LOW`), never numbers, and the engine
+never uses them to coach a reply. Change a kind with
+`lre relationship set <id> --kind KIND`.
+
 ## v0.1 bias detectors (deliberately uncalibrated heuristics)
 
 | Rule | Trigger |
@@ -111,6 +135,8 @@ CONTINUE_OBSERVING
 | `high_emotion_major_decision` | emotional state is high **and** life-decision exposure > 0 |
 | `unresolved_inconsistencies` | ≥ 1 unresolved inconsistency recorded |
 | `love_bombing_pattern` | early window: ≥3 CHEAP + ≥1 COSTLY + ≥5 total signals |
+| `rapid_exposure_escalation` | exposure +≥3 points within 2 days **and** zero new observations in that window (needs the v3 history log) |
+| `promise_expiry` | windowed kinds only: future-directed `--claim` untouched past the promise window |
 
 > These thresholds are **placeholders**, not calibrated likelihoods. v0.1 does
 > **not** produce pseudo-precise scores like "trustworthiness 87.34%".
