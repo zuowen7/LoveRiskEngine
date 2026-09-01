@@ -16,7 +16,7 @@ matching `_migrate_vN_to_vN1` step in `storage/database.py`. Never renumber an
 existing version — databases in the wild are already stamped with it.
 """
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Insertion order for bulk export/restore: foreign-key parents before children;
 # deletes run in reverse so `PRAGMA foreign_keys = ON` stays satisfied.
@@ -36,6 +36,7 @@ TABLE_ORDER = (
     "state_history",
     "exposure_history",
     "verification_items",
+    "review_outcomes",
 )
 
 SCHEMA = """
@@ -114,6 +115,14 @@ CREATE TABLE IF NOT EXISTS verification_items (
     created_at       TEXT NOT NULL,
     verified_at      TEXT,
     FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+);
+
+CREATE TABLE IF NOT EXISTS review_outcomes (
+    review_id   TEXT PRIMARY KEY,
+    outcome     TEXT NOT NULL,
+    note        TEXT NOT NULL DEFAULT '',
+    labeled_at  TEXT NOT NULL,
+    FOREIGN KEY (review_id) REFERENCES reviews(id)
 );
 
 CREATE TABLE IF NOT EXISTS boundaries (

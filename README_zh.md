@@ -1,5 +1,9 @@
 # LoveRiskEngine
 
+[![CI](https://github.com/zuowen7/LoveRiskEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/zuowen7/LoveRiskEngine/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)]()
+
 > 一个**个人关系决策支持框架**。它帮助你记录观察、审计自己的认知偏差、追踪风险敞口，并在重大关系决策前触发结构化复盘——在信息不完备的条件下。
 
 [English README](README.md) · [英文上手文档](docs/getting-started.en.md) · [中文上手文档](docs/getting-started.zh.md)
@@ -18,7 +22,7 @@
 3. **敞口不能跑赢证据** —— 时间 / 情绪 / 隐私 / 财务 / 重大决定五轴敞口分开追踪；敞口涨得比证据快，就会告警。
 4. **默认动作是继续观察** —— 系统从不默认"信任"或"拒绝"。输出五种状态：`CONTINUE_OBSERVING`、`WAIT`、`PAUSE`、`DECREASE_EXPOSURE`、`EXIT`。
 5. **硬边界** —— 你自己预先画线。边界命中只有在**有记录证据**时才能给出 `EXIT` 建议；单条模糊观察永不自动定罪。
-6. **偏差审计** —— 内置 10 个检测器（见下）。
+6. **偏差审计** —— 内置 9 个检测器（见下）。
 7. **隐私优先** —— 仅本地 SQLite，无多余 PII，无爬取、无定位接口，**零网络依赖**。
 
 ## 安装（开发模式）
@@ -103,7 +107,6 @@ lre completion powershell | Out-String | Invoke-Expression  # PowerShell
 | `rapid_exposure_escalation` | 2 天内敞口 +≥3 分 **且** 窗口内零新观察 |
 | `promise_expiry` | 仅窗口类关系：未来时态 `--claim` 超过承诺窗口未被触及 |
 | `repeated_repromises` | 仅窗口类关系：同一属性窗口内重复承诺 ≥3 次 |
-| `exit_cost` 敏感变体 | PARENT/BOSS/MENTOR 上，吸引力差距 / 合理化连续阈值提前，偏移值打印在告警里 |
 
 > 这些阈值是**占位值**，不是校准过的概率。本引擎**绝不**产出"可信度 87.34%"这类伪精确分数。
 

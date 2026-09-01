@@ -44,6 +44,10 @@ style preference:
 10. **Docs as contracts.** Every slice keeps its proposal/plan in
     `docs/proposals/`; this document is amended before deviation, and
     `AUDIT_REPORT.md` carries the live issue register.
+11. **Docs carry no driftable hard numbers.** Test counts, detector counts and
+    similar claims are either purged from the docs or pinned by executable
+    doc-guard tests (`tests/test_docs.py`) that fail the build on drift.
+    *(Added 2026-09-01, license/docs/calibration phase.)*
 
 ## 2. Target module architecture
 

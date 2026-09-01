@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..core.boundaries import Boundary, BoundaryHit
+from ..core.calibration import VALID_OUTCOMES, ReviewOutcome
 from ..core.cooldown import Cooldown
 from ..core.exposure import Exposure
 from ..core.history import ExposureChange, StateChange
@@ -69,6 +70,12 @@ def _validate_verification_status(status: str) -> None:
     """Allow-list verification statuses before they reach the database."""
     if status not in _VALID_VERIFICATION_STATUSES:
         raise ValueError(f"unknown verification status: {status!r}")
+
+
+def _validate_outcome(outcome: str) -> None:
+    """Allow-list review outcome labels before they reach the database."""
+    if outcome not in VALID_OUTCOMES:
+        raise ValueError(f"unknown outcome: {outcome!r}")
 
 
 def _now() -> str:
@@ -211,6 +218,8 @@ class Database:
             self._migrate_v2_to_v3()
         if version < 4:
             self._migrate_v3_to_v4()
+        if version < 5:
+            self._migrate_v4_to_v5()
         self._set_user_version(SCHEMA_VERSION)
 
     def _migrate_v0_to_v1(self) -> None:
@@ -319,6 +328,20 @@ class Database:
                 created_at       TEXT NOT NULL,
                 verified_at      TEXT,
                 FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+            )
+            """
+        )
+
+    def _migrate_v4_to_v5(self) -> None:
+        """Create the review-outcome table (calibration measurement phase)."""
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS review_outcomes (
+                review_id   TEXT PRIMARY KEY,
+                outcome     TEXT NOT NULL,
+                note        TEXT NOT NULL DEFAULT '',
+                labeled_at  TEXT NOT NULL,
+                FOREIGN KEY (review_id) REFERENCES reviews(id)
             )
             """
         )
@@ -1135,4 +1158,53 @@ class Database:
             note=r["note"],
             created_at=r["created_at"],
             verified_at=r["verified_at"],
+        )
+
+    # --- review outcomes (calibration measurement phase, schema v5) ---
+    def label_review_outcome(
+        self, review_id: str, outcome: str, note: str = ""
+    ) -> bool:
+        """Record the user's retrospective label on a review. Upsert.
+
+        Re-labeling overwrites — labels are judgments, not evidence; the
+        underlying review is never touched. Returns False if the review is
+        unknown.
+        """
+        _validate_outcome(outcome)
+        if self.get_review(review_id) is None:
+            return False
+        self._db.execute(
+            "INSERT INTO review_outcomes(review_id, outcome, note, labeled_at) "
+            "VALUES (?,?,?,?) "
+            "ON CONFLICT(review_id) DO UPDATE SET "
+            "outcome=excluded.outcome, note=excluded.note, "
+            "labeled_at=excluded.labeled_at",
+            (review_id, outcome, note, _now()),
+        )
+        self._commit()
+        return True
+
+    def get_review_outcome(self, review_id: str) -> ReviewOutcome | None:
+        row = self._db.execute(
+            "SELECT * FROM review_outcomes WHERE review_id=?", (review_id,)
+        ).fetchone()
+        return self._row_to_review_outcome(row) if row else None
+
+    def list_review_outcomes(self, relationship_id: str) -> list[ReviewOutcome]:
+        return [
+            self._row_to_review_outcome(r)
+            for r in self._db.execute(
+                "SELECT o.* FROM review_outcomes o "
+                "JOIN reviews r ON o.review_id = r.id "
+                "WHERE r.relationship_id=? ORDER BY o.labeled_at",
+                (relationship_id,),
+            ).fetchall()
+        ]
+
+    def _row_to_review_outcome(self, r: sqlite3.Row) -> ReviewOutcome:
+        return ReviewOutcome(
+            review_id=r["review_id"],
+            outcome=r["outcome"],
+            note=r["note"],
+            labeled_at=r["labeled_at"],
         )

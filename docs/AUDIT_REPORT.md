@@ -171,6 +171,9 @@ refuse — that contrast *is* the positioning.
 | S1 | P2 | Roadmap incoherence (old README list) | resolved by `ARCHITECTURE_AND_PLAN.md` |
 | I1 | P2 | UI is English-only | **Implemented** — i18n via stdlib catalog (`LRE_LANG=zh`), display-time localization, canonical English persisted |
 | I2 | P3 | Plain-text CLI output | **Implemented** — optional `rich` presentation (`pretty` extra, soft import, plain fallback) |
+| D5 | P2 | Docs drift from code (detector counts, test counts, stale roadmaps) | **Implemented** — hard numbers purged or pin-guarded by `tests/test_docs.py` (invariant #11) |
+| C1 | P2 | Detector thresholds uncalibrated; no evaluation data | **Measurement phase implemented** — `lre evaluate` labels + `lre calibration` honest per-rule counts (schema v5); threshold overrides deferred until labeled data exists |
+| C2 | P3 | No open-source license | **Implemented** — Apache-2.0 `LICENSE` + `pyproject` license field |
 
 **No P0 issues found.** The P1s are data-safety items and are the first thing
 the optimization plan discharges.

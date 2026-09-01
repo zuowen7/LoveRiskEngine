@@ -1,5 +1,9 @@
 # LoveRiskEngine
 
+[![CI](https://github.com/zuowen7/LoveRiskEngine/actions/workflows/ci.yml/badge.svg)](https://github.com/zuowen7/LoveRiskEngine/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)]()
+
 > [中文 README](README_zh.md) · [Getting started (English)](docs/getting-started.en.md) · [上手文档（中文）](docs/getting-started.zh.md)
 
 A **personal relationship decision-support framework**. It helps you record
@@ -31,7 +35,7 @@ incomplete information.
 5. **Hard boundaries** — you pre-commit your own lines. A hit can suggest
    `EXIT` **only when backed by recorded evidence**; a single vague observation
    never auto-convicts.
-6. **Bias auditing** — ships 8 detectors (see below).
+6. **Bias auditing** — ships 9 detectors (see below).
 7. **Privacy first** — local SQLite only, no unnecessary PII, no scraping or
    locating interfaces.
 

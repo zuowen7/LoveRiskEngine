@@ -438,6 +438,26 @@ CATALOG: dict[str, dict[Language, str]] = {
         Language.EN: "Marked {id} as failed.",
         Language.ZH: "已将 {id} 标记为不成立。",
     },
+    "evaluate_done": {
+        Language.EN: "Labeled review {id} as {outcome}.",
+        Language.ZH: "已将复盘 {id} 标记为「{outcome}」。",
+    },
+    "calibration_header": {
+        Language.EN: "Calibration for {rid} (your own labeled history)",
+        Language.ZH: "{rid} 的校准报告（你自己的标注历史）",
+    },
+    "calibration_totals": {
+        Language.EN: "{labeled} of {total} reviews labeled.",
+        Language.ZH: "{total} 次复盘中有 {labeled} 次已标注。",
+    },
+    "calibration_stats_header": {
+        Language.EN: "Rule stats (fired | labeled | labeled bad):",
+        Language.ZH: "规则统计（触发 | 已标注 | 标注为差）：",
+    },
+    "calibration_honest_note": {
+        Language.EN: "Note: these are counts from your own labeled history, not calibrated probabilities. Labels never feed the engine automatically.",
+        Language.ZH: "说明：这些只是你自己标注历史中的计数，不是校准过的概率。标签永远不会自动喂回引擎。",
+    },
     "counterfactual_none": {
         Language.EN: "No reviews recorded for {rid} yet.",
         Language.ZH: "{rid} 还没有复盘记录。",

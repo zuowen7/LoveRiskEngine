@@ -242,3 +242,32 @@ def test_v3_database_gains_verification_items(tmp_path):
         .fetchall()
     }
     assert "verification_items" in tables
+
+
+def test_v4_database_gains_review_outcomes(tmp_path):
+    """A database stamped v4 (no review_outcomes) upgrades to v5."""
+    path = str(tmp_path / "v4.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE relationships ("
+        "id TEXT PRIMARY KEY, alias TEXT NOT NULL, status TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'LOVER');"
+    )
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    try:
+        db.init()
+    finally:
+        db.close()
+
+    assert _version(path) == SCHEMA_VERSION
+    tables = {
+        r[0]
+        for r in sqlite3.connect(path)
+        .execute("SELECT name FROM sqlite_master WHERE type='table'")
+        .fetchall()
+    }
+    assert "review_outcomes" in tables

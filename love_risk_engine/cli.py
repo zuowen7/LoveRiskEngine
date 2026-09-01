@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from .core.bias_detector import BiasFinding
+from .core.calibration import VALID_OUTCOMES, compute_calibration
 from .core.chat_import import (
     load_claim_rules,
     parse_file,
@@ -898,6 +899,35 @@ def cmd_counterfactual(args: argparse.Namespace, db: Database) -> None:
     print(t("counterfactual_note"))
 
 
+def cmd_evaluate(args: argparse.Namespace, db: Database) -> None:
+    if db.get_review(args.review_id) is None:
+        sys.exit(t("error_review_not_found", id=args.review_id))
+    db.label_review_outcome(args.review_id, args.outcome, args.note)
+    print(t("evaluate_done", id=args.review_id, outcome=args.outcome))
+
+
+def cmd_calibration(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    reviews = db.list_reviews(rel.id)
+    if not reviews:
+        print(t("counterfactual_none", rid=rel.id))
+        return
+    report = compute_calibration(reviews, db.list_review_outcomes(rel.id))
+    print(t("calibration_header", rid=rel.id))
+    print(
+        t(
+            "calibration_totals",
+            labeled=report.reviews_labeled,
+            total=report.total_reviews,
+        )
+    )
+    if report.rules:
+        print(t("calibration_stats_header"))
+        for s in report.rules:
+            print(f"  {s.rule_id:32s} {s.fired:5d} | {s.labeled:7d} | {s.bad:11d}")
+    print(t("calibration_honest_note"))
+
+
 def cmd_completion(args: argparse.Namespace, _db: Database) -> None:
     print(COMPLETION_SCRIPTS[args.shell], end="")
 
@@ -1151,6 +1181,18 @@ def build_parser() -> argparse.ArgumentParser:
     pc_internal = sub.add_parser("_complete", help=argparse.SUPPRESS)
     pc_internal.add_argument("tokens", nargs=argparse.REMAINDER)
 
+    peval = sub.add_parser(
+        "evaluate", help="Label a past review with its retrospective outcome"
+    )
+    peval.add_argument("review_id")
+    peval.add_argument("--outcome", required=True, choices=list(VALID_OUTCOMES))
+    peval.add_argument("--note", default="")
+
+    pcal = sub.add_parser(
+        "calibration", help="Honest per-rule stats over your labeled reviews"
+    )
+    pcal.add_argument("relationship")
+
     pchat = sub.add_parser("chat", help="Local chat import & analysis (offline)")
     pchat_sub = pchat.add_subparsers(dest="sub", required=True)
     pimp = pchat_sub.add_parser("import", help="Import a local chat export")
@@ -1217,6 +1259,8 @@ DISPATCH = {
     },
     "completion": cmd_completion,
     "_complete": cmd_internal_complete,
+    "evaluate": cmd_evaluate,
+    "calibration": cmd_calibration,
     "chat": {"import": cmd_chat_import},
     "timeline": cmd_timeline,
     "cooldown": cmd_cooldown,

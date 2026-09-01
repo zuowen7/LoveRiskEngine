@@ -1288,6 +1288,49 @@ def test_rich_fallback_prints_plain(monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
+# calibration / evaluation (measurement phase, v1)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_then_calibration_roundtrip(run, seeded):
+    run("state", "set", "Alex", "--attraction", "9", "--trust", "2")
+    review_out = run("review", "Alex")
+    review_id = _first_id(review_out, "RV")
+    run("evaluate", review_id, "--outcome", "bad", "--note", "it got worse")
+    out = run("calibration", "Alex")
+    assert "attraction_exceeds_trust" in out
+    assert "labeled" in out or "Labeled" in out or "已标记" in out
+
+
+def test_evaluate_unknown_review_exits(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("evaluate", "RV999", "--outcome", "good")
+    assert "not found" in str(exc.value)
+
+
+def test_calibration_reports_empty_gracefully(run, seeded):
+    out = run("calibration", "Alex")
+    assert "0" in out  # zero reviews labeled, honestly reported
+
+
+def test_calibration_with_reviews_but_no_rules(monkeypatch, run, seeded):
+    """Unreachable via `main()`: run_hooks always returns >=1 finding."""
+    import love_risk_engine.cli as cli
+    from love_risk_engine.core.calibration import CalibrationReport
+
+    run("review", "Alex")  # ensure at least one review exists
+    monkeypatch.setattr(
+        cli,
+        "compute_calibration",
+        lambda reviews, outcomes: CalibrationReport(
+            rules=[], reviews_labeled=0, total_reviews=1
+        ),
+    )
+    out = run("calibration", "Alex")
+    assert "Rule stats" not in out and "规则统计" not in out
+
+
+# ---------------------------------------------------------------------------
 # sensitivity direction, boundary seeds, review context (S3)
 # ---------------------------------------------------------------------------
 

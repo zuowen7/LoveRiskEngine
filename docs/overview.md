@@ -118,13 +118,22 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
   facts in three states (unverified / verified / failed); `status` prints
   `Verified facts: N of M`. Record + display only — the engine never
   auto-verifies, and weighting integration is a separate slice.
+- **Calibration / evaluation — measurement phase** (schema v5
+  `review_outcomes` + `lre evaluate` + `lre calibration`): the user labels
+  past reviews with retrospective outcomes (good/bad/neutral); the report
+  shows per-rule fired/labeled/bad counts — counts from your own labeled
+  history, never calibrated probabilities, never fed back into the engine
+  automatically. Personal threshold overrides are the deferred next slice
+  (architecture §4).
 - **Data safety (phase 1)**: platform data-home default with legacy CWD
   fallback; lossless `lre export` / `lre restore` (SHA-256 bundle); `lre db
   check`; executable network-import guard test (invariant #1).
 
 ## Test results
 
-`pytest` → **314 passed**. Branch coverage **99%**; `cli.py` at **100%**
+`pytest` → **340+ tests**（the exact count grows with every slice and is
+deliberately not maintained here — see `AUDIT_REPORT.md` and the CI badge for
+current numbers）. Branch coverage **≥ 98%**; `cli.py` at **100%**
 (statement and branch). Coverage floor enforced at **95%** in both
 `pyproject.toml` (`fail_under`) and CI.
 
