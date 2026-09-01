@@ -33,6 +33,7 @@ def test_attraction_exceeds_trust_fires():
     f = attraction_exceeds_trust(st, [_obs(1)])
     assert f is not None
     assert f.rule_id == "attraction_exceeds_trust"
+    assert f.msg_key == "attraction_exceeds_trust"  # localizable by key
 
 
 def test_attraction_exceeds_trust_silent_when_evidence_present():

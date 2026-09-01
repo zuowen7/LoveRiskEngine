@@ -277,8 +277,8 @@ def test_review_reports_no_hooks_and_no_notes(monkeypatch, run, seeded):
 
     real_run_review = cli.run_review
 
-    def no_hooks(db, relationship_id):
-        review = real_run_review(db, relationship_id)
+    def no_hooks(db, relationship_id, ctx=None):
+        review = real_run_review(db, relationship_id, ctx=ctx)
         review.triggered_hooks = []
         review.notes = ""
         return review
@@ -1209,6 +1209,42 @@ def test_internal_complete_prints_candidates(run, seeded):
 def test_internal_complete_never_lists_itself(run, seeded):
     out = run("_complete", "")
     assert "_complete" not in out
+
+
+# ---------------------------------------------------------------------------
+# i18n (localization phase)
+# ---------------------------------------------------------------------------
+
+
+def test_english_is_default_and_unchanged(run, seeded):
+    out = run("status", "Alex")
+    assert "Recommendation:" in out
+    assert "Warnings:" in out
+    assert "Relationship:" in out
+
+
+def test_status_labels_localize_to_chinese(run, seeded, monkeypatch):
+    monkeypatch.setenv("LRE_LANG", "zh")
+    out = run("status", "Alex")
+    assert "建议：" in out
+    assert "警告" in out
+    assert "关系：" in out
+
+
+def test_help_localizes_to_chinese(run, seeded, monkeypatch, capsys):
+    monkeypatch.setenv("LRE_LANG", "zh")
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    assert "用法" in out
+
+
+def test_review_warning_localizes_to_chinese(run, seeded, monkeypatch):
+    monkeypatch.setenv("LRE_LANG", "zh")
+    run("state", "set", "Alex", "--attraction", "9", "--trust", "2")
+    out = run("review", "Alex")
+    assert "吸引力" in out  # the attraction-vs-trust warning in Chinese
+    assert "建议：" in out
 
 
 # ---------------------------------------------------------------------------

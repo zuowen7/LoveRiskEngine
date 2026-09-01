@@ -131,6 +131,7 @@ def test_detect_expired_promises_fires_wait_with_audit_details():
     f = detect_expired_promises(obs, 90, now=NOW)
     assert f is not None
     assert f.rule_id == "promise_expiry"
+    assert f.msg_key == "promise_expiry"  # localizable by key
     assert f.proposed_decision == "WAIT"
     assert "90" in f.message
     assert "rec='will recommend me'" in f.message

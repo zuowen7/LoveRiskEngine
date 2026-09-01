@@ -84,4 +84,11 @@ def detect_rapid_exposure_escalation(
         f"{current.total:.1f}) with no new observations recorded in that window.",
         severity=3,
         proposed_decision="PAUSE",
+        msg_key="rapid_exposure_escalation",
+        msg_params={
+            "delta": f"{delta:.1f}",
+            "window": str(RAPID_EXPOSURE_WINDOW_DAYS),
+            "baseline": f"{baseline.total:.1f}",
+            "current": f"{current.total:.1f}",
+        },
     )

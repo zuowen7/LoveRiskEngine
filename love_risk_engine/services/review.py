@@ -67,8 +67,12 @@ def analyze(ctx: ReviewContext) -> tuple[list[BiasFinding], Decision]:
     return findings, decision
 
 
-def run_review(db: Database, relationship_id: str) -> Review:
-    ctx = build_context(db, relationship_id)
+def run_review(
+    db: Database, relationship_id: str, ctx: ReviewContext | None = None
+) -> Review:
+    """Run the full review workflow; `ctx` lets callers reuse an analysis."""
+    if ctx is None:
+        ctx = build_context(db, relationship_id)
     findings, decision = analyze(ctx)
     inconsistencies_count = ctx.inconsistency_count
 

@@ -21,6 +21,7 @@ from .history import (
     describe_exposure_change,
     describe_state_change,
 )
+from .i18n import t
 from .observation import Observation
 from .signals import SignalType
 
@@ -148,7 +149,7 @@ def build_timeline(
 
 def format_timeline(events: list[TimelineEvent]) -> str:
     if not events:
-        return "(no timestamped events yet)"
+        return t("timeline_empty")
     lines: list[str] = []
     last_ts = ""
     for e in events:

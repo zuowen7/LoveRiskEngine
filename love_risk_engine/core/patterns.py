@@ -68,5 +68,11 @@ def detect_love_bombing(
             f"convict on a pattern alone.",
             severity=3,
             proposed_decision="PAUSE",
+            msg_key="love_bombing_pattern",
+            msg_params={
+                "n": str(len(early)),
+                "cheap": str(cheap),
+                "costly": str(costly),
+            },
         )
     return None

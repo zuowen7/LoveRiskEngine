@@ -14,7 +14,7 @@ roadmap's calibration / Bayesian work later.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .evidence import EvidenceSupport
@@ -51,6 +51,11 @@ class BiasFinding:
     message: str
     severity: int  # 0 info, 1 low, 2, 3 medium, 4 high, 5 critical
     proposed_decision: str | None = None
+    # Display-time localization (core/i18n.py): `message` stays the canonical
+    # English text (persisted in review notes); `msg_key` + `msg_params` let
+    # the display layer render the finding in the user's language.
+    msg_key: str = ""
+    msg_params: dict[str, object] = field(default_factory=dict)
 
 
 def attraction_exceeds_trust(
@@ -72,13 +77,22 @@ def attraction_exceeds_trust(
             f"Attraction ({state.attraction:.1f}) significantly exceeds "
             f"supported trust ({state.trust:.1f})"
         )
+        params: dict[str, object] = {
+            "attraction": f"{state.attraction:.1f}",
+            "trust": f"{state.trust:.1f}",
+        }
+        key = "attraction_exceeds_trust"
         if sensitivity is Sensitivity.HIGH_EXIT_COST:
+            key = "attraction_exceeds_trust_sensitive"
+            params["gap"] = f"{gap:.1f}"
             message += f" (exit-cost sensitive: gap threshold {gap:.1f})"
         return BiasFinding(
             "attraction_exceeds_trust",
             message + ".",
             severity=2,
             proposed_decision="CONTINUE_OBSERVING",
+            msg_key=key,
+            msg_params=params,
         )
     return None
 
@@ -102,13 +116,19 @@ def repeated_rationalization(
             run = 0
     if best_run >= threshold:
         message = f"{best_run} consecutive rationalizations detected"
+        params: dict[str, object] = {"count": str(best_run)}
+        key = "repeated_rationalization"
         if sensitivity is Sensitivity.HIGH_EXIT_COST:
+            key = "repeated_rationalization_sensitive"
+            params["threshold"] = str(threshold)
             message += f" (exit-cost sensitive: run threshold {threshold})"
         return BiasFinding(
             "repeated_rationalization",
             message + ".",
             severity=3,
             proposed_decision="CONTINUE_OBSERVING",
+            msg_key=key,
+            msg_params=params,
         )
     return None
 
@@ -131,6 +151,7 @@ def exposure_outpaces_evidence(
             "No observations recorded yet; evidence base is empty.",
             severity=0,
             proposed_decision=None,
+            msg_key="exposure_empty_evidence",
         )
     if exposure.total > support.support_units:
         return BiasFinding(
@@ -141,6 +162,13 @@ def exposure_outpaces_evidence(
             f"{support.distinct_sources} source(s)).",
             severity=3,
             proposed_decision="DECREASE_EXPOSURE",
+            msg_key="exposure_outpaces_evidence",
+            msg_params={
+                "total": f"{exposure.total:.1f}",
+                "units": f"{support.support_units:.1f}",
+                "count": str(support.observation_count),
+                "sources": str(support.distinct_sources),
+            },
         )
     return BiasFinding(
         "exposure_within_support",
@@ -151,6 +179,13 @@ def exposure_outpaces_evidence(
         f"{support.with_claims}/{support.observation_count} with claims).",
         severity=0,
         proposed_decision=None,
+        msg_key="exposure_within_support",
+        msg_params={
+            "units": f"{support.support_units:.1f}",
+            "alt": str(support.with_alternative),
+            "claims": str(support.with_claims),
+            "count": str(support.observation_count),
+        },
     )
 
 
@@ -164,6 +199,7 @@ def high_emotion_major_decision(
             "High emotional state while considering a major life decision.",
             severity=4,
             proposed_decision="PAUSE",
+            msg_key="high_emotion_major_decision",
         )
     return None
 
@@ -176,5 +212,7 @@ def unresolved_inconsistencies(count: int) -> BiasFinding | None:
             f"{count} unresolved inconsistencies.",
             severity=3 if count >= 2 else 2,
             proposed_decision="CONTINUE_OBSERVING",
+            msg_key="unresolved_inconsistencies",
+            msg_params={"count": str(count)},
         )
     return None

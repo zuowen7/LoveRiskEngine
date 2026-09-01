@@ -165,6 +165,12 @@ def detect_expired_promises(
         f"{details}.",
         severity=2,
         proposed_decision="WAIT",
+        msg_key="promise_expiry",
+        msg_params={
+            "count": str(len(expired)),
+            "window": str(window_days),
+            "details": details,
+        },
     )
 
 
@@ -248,4 +254,10 @@ def detect_repeated_repromises(
         f"{total} promise re-mention(s) within {window_days} days: {details}.",
         severity=2,
         proposed_decision="WAIT",
+        msg_key="repeated_repromises",
+        msg_params={
+            "total": str(total),
+            "window": str(window_days),
+            "details": details,
+        },
     )

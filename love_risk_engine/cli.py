@@ -43,6 +43,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from .core.bias_detector import BiasFinding
 from .core.chat_import import (
@@ -57,6 +58,7 @@ from .core.evidence import EvidenceSupport
 from .core.exposure import Exposure
 from .core.history import describe_exposure_change, describe_state_change
 from .core.hooks import ReviewContext
+from .core.i18n import localize_finding, t
 from .core.inconsistency import Inconsistency
 from .core.observation import Claim
 from .core.profiles import RelationshipProfile, get_profile
@@ -83,7 +85,7 @@ def get_db() -> Database:
 def resolve_relationship(db: Database, token: str) -> Relationship:
     rel = db.get_relationship(token)
     if rel is None:
-        sys.exit(f"Error: relationship not found: {token!r}")
+        sys.exit(t("error_relationship_not_found", token=repr(token)))
     return rel
 
 
@@ -96,11 +98,11 @@ def _profile_context(profile: RelationshipProfile) -> str | None:
     if profile.kind is Kind.LOVER:
         return None
     parts = [
-        f"power asymmetry: {profile.power_asymmetry.value}",
-        f"exit cost: {profile.exit_cost.value}",
+        t("context_power", v=profile.power_asymmetry.value),
+        t("context_exit", v=profile.exit_cost.value),
     ]
     if profile.voice:
-        parts.append(profile.voice)
+        parts.append(t(profile.voice))
     return " | ".join(parts)
 
 
@@ -243,23 +245,23 @@ def _active_cooldowns(db: Database, rid: str) -> list[Cooldown]:
 # ---------------------------------------------------------------------------
 def cmd_init(_args: argparse.Namespace, db: Database) -> None:
     db.init()
-    print(f"Initialized LoveRiskEngine database at {db.path}")
+    print(t("init_done", path=db.path))
 
 
 def cmd_relationship_add(args: argparse.Namespace, db: Database) -> None:
     rid = db.add_relationship(args.alias, kind=args.kind)
-    print(f"Created relationship {rid} (alias: {args.alias}, kind: {args.kind})")
+    print(t("relationship_created", id=rid, alias=args.alias, kind=args.kind))
     seeds = get_profile(args.kind).boundary_seeds
     if seeds:
-        print("Suggested boundaries for this kind (add only what matches you):")
+        print(t("seed_boundaries_header"))
         for seed in seeds:
             print(f"  - {seed}")
 
 
 def cmd_relationship_set(args: argparse.Namespace, db: Database) -> None:
     if not db.set_relationship_kind(args.id, args.kind):
-        sys.exit(f"Error: relationship not found: {args.id!r}")
-    print(f"Set kind {args.kind} for {args.id}")
+        sys.exit(t("error_relationship_not_found", token=repr(args.id)))
+    print(t("kind_set", kind=args.kind, id=args.id))
 
 
 def cmd_observe(args: argparse.Namespace, db: Database) -> None:
@@ -267,10 +269,10 @@ def cmd_observe(args: argparse.Namespace, db: Database) -> None:
     claims: list[Claim] = []
     for item in args.claim:
         if "=" not in item:
-            sys.exit(f"Error: --claim must be attribute=value, got {item!r}")
+            sys.exit(t("error_claim_equals", item=repr(item)))
         k, v = item.split("=", 1)
         if not k.strip():
-            sys.exit(f"Error: --claim attribute is empty in {item!r}")
+            sys.exit(t("error_claim_empty", item=repr(item)))
         claims.append(Claim(attribute=k.strip(), value=v.strip()))
 
     if args.signal_type:
@@ -279,10 +281,7 @@ def cmd_observe(args: argparse.Namespace, db: Database) -> None:
         hint = suggest_signal_type(args.observation)
         signal_type = SignalType.UNSPECIFIED
         if hint is not None:
-            print(
-                f"(hint) observation text suggests signal type "
-                f"{hint.value}. Use --signal-type to confirm or override."
-            )
+            print(t("signal_hint", type=hint.value))
 
     oid = db.add_observation(
         rel.id,
@@ -300,7 +299,7 @@ def cmd_observe(args: argparse.Namespace, db: Database) -> None:
     extra = f" with {len(claims)} claim(s)" if claims else ""
     if signal_type is not SignalType.UNSPECIFIED:
         extra += f" [{signal_type.value}]"
-    print(f"Recorded observation {oid} for {rel.id}{extra}")
+    print(t("observation_recorded", id=oid, rel=rel.id, extra=extra))
 
 
 def _compute_status(
@@ -362,42 +361,42 @@ def format_status(
     verification: tuple[int, int] | None = None,
 ) -> str:
     lines: list[str] = []
-    lines.append(f"Relationship: {rid}")
+    lines.append(t("relationship_header", rid=rid))
     if kind is not None and profile is not None:
-        lines.append(f"Kind             {kind}")
+        lines.append(t("kind_line", kind=kind))
         context = _profile_context(profile)
         if context:
-            lines.append("Context          " + context)
+            lines.append(t("context_line", context=context))
     lines.append("")
-    lines.append(f"Attraction       {state.attraction:.1f} / 10")
-    lines.append(f"Trust            {state.trust:.1f} / 10")
-    lines.append(f"Uncertainty      {state.uncertainty:.1f} / 10")
-    lines.append(f"Emotional        {state.emotional_state.value}")
+    lines.append(t("attraction_metric", v=f"{state.attraction:.1f}"))
+    lines.append(t("trust_metric", v=f"{state.trust:.1f}"))
+    lines.append(t("uncertainty_metric", v=f"{state.uncertainty:.1f}"))
+    lines.append(t("emotional_metric", v=state.emotional_state.value))
     lines.append("")
-    lines.append("Exposure")
-    lines.append(f"  Time           {exposure.time:.1f}")
-    lines.append(f"  Emotional      {exposure.emotional:.1f}")
-    lines.append(f"  Privacy        {exposure.privacy:.1f}")
-    lines.append(f"  Financial      {exposure.financial:.1f}")
-    lines.append(f"  Life decision  {exposure.life_decision:.1f}")
+    lines.append(t("exposure_header"))
+    lines.append(t("exposure_time", v=f"{exposure.time:.1f}"))
+    lines.append(t("exposure_emotional", v=f"{exposure.emotional:.1f}"))
+    lines.append(t("exposure_privacy", v=f"{exposure.privacy:.1f}"))
+    lines.append(t("exposure_financial", v=f"{exposure.financial:.1f}"))
+    lines.append(t("exposure_life", v=f"{exposure.life_decision:.1f}"))
     lines.append("")
-    lines.append("Evidence support")
-    lines.append(f"  Observations   {evidence_support.observation_count}")
-    lines.append(f"  Sources        {evidence_support.distinct_sources}")
-    lines.append(f"  w/ Alt expl.   {evidence_support.with_alternative}")
-    lines.append(f"  w/ Claims      {evidence_support.with_claims}")
-    lines.append(f"  Costly signals {evidence_support.costly_count}")
-    lines.append(f"  Cheap talk     {evidence_support.cheap_count}")
-    lines.append(f"  Support units  {evidence_support.support_units:.1f}")
+    lines.append(t("evidence_header"))
+    lines.append(t("evidence_observations", n=evidence_support.observation_count))
+    lines.append(t("evidence_sources", n=evidence_support.distinct_sources))
+    lines.append(t("evidence_alt", n=evidence_support.with_alternative))
+    lines.append(t("evidence_claims", n=evidence_support.with_claims))
+    lines.append(t("evidence_costly", n=evidence_support.costly_count))
+    lines.append(t("evidence_cheap", n=evidence_support.cheap_count))
+    lines.append(t("evidence_units", v=f"{evidence_support.support_units:.1f}"))
     lines.append("")
-    lines.append("Warnings:")
+    lines.append(t("warnings_header"))
     if findings:
         for f in findings:
-            lines.append(f"- {f.message}")
+            lines.append(f"- {localize_finding(f)}")
     else:
-        lines.append("- None.")
+        lines.append(t("none_dash"))
     lines.append("")
-    lines.append(f"Unresolved inconsistencies: {inconsistency_count}")
+    lines.append(t("unresolved_count", n=inconsistency_count))
     if acknowledged:
         # breakdown by resolution type — keeps acknowledged items visible
         buckets: dict = {}
@@ -405,35 +404,32 @@ def format_status(
             res = it.resolution or "resolved"
             buckets[res] = buckets.get(res, 0) + 1
         parts = ", ".join(f"{v} {k}" for k, v in sorted(buckets.items()))
-        lines.append(f"Acknowledged (closed): {len(acknowledged)} ({parts})")
+        lines.append(t("acknowledged_line", n=len(acknowledged), parts=parts))
     if verification is not None:
         verified, total = verification
-        lines.append(f"Verified facts: {verified} of {total}")
+        lines.append(t("verified_facts", v=verified, t=total))
     if contradictions:
         lines.append("")
-        lines.append("Conflicting claims (top):")
+        lines.append(t("conflicts_header"))
         for c in contradictions:
             lines.append(
                 f"- [{c.attribute}] {c.value_a!r} vs {c.value_b!r} "
                 f"({c.obs_a_id}, {c.obs_b_id})"
             )
         if more_conflicts:
-            lines.append("  ...run `lre contradictions <rel> --save` to persist all.")
+            lines.append(t("conflicts_more"))
     if promises is not None and (promises.within or promises.expired):
         lines.append("")
-        lines.append(f"Promises (window: {promises.window_days}d)")
+        lines.append(t("promises_header", w=promises.window_days))
         for p in promises.within:
             lines.append(
                 f"  {p.attribute}={p.value!r} ({p.observation_id}, "
                 f"{p.timestamp[:10]}, {p.age_days}d)"
             )
         if promises.expired:
-            lines.append(
-                f"Older promises ({len(promises.expired)}): "
-                "run `lre promises <rel>` for details."
-            )
+            lines.append(t("older_promises", n=len(promises.expired)))
     lines.append("")
-    lines.append("Recommendation:")
+    lines.append(t("recommendation_label"))
     lines.append(decision.value)
     return "\n".join(lines)
 
@@ -441,67 +437,61 @@ def format_status(
 def cmd_review(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     profile = get_profile(rel.kind)
-    review = run_review(db, rel.id)
-    print(f"Review {review.id} for {rel.id}")
+    ctx = build_context(db, rel.id)
+    findings, _decision = analyze(ctx)
+    review = run_review(db, rel.id, ctx=ctx)
+    print(t("review_header", id=review.id, rid=rel.id))
     context = _profile_context(profile)
     if context:
-        print(f"Context: {context}")
-    print(f"Recommendation: {review.recommendation}")
-    print(f"Unresolved inconsistencies: {review.unresolved_inconsistencies}")
-    print("Triggered hooks:")
+        print(t("context_label", context=context))
+    print(f"{t('recommendation_label')} {review.recommendation}")
+    print(t("review_unresolved", n=review.unresolved_inconsistencies))
+    print(t("review_hooks_header"))
     if review.triggered_hooks:
         for hook in review.triggered_hooks:
             print(f"  - {hook}")
     else:
-        print("  - none")
-    if review.notes:
-        print(f"Notes: {review.notes}")
+        print(t("review_none"))
+    print(t("review_warnings_header"))
+    for f in findings:
+        print(f"- {localize_finding(f)}")
     if review.cooldown_id:
-        print(
-            f"Cooldown {review.cooldown_id} started — exposure-raising actions "
-            f"are gated until it expires. See: lre cooldown {args.relationship}"
-        )
+        print(t("review_cooldown", id=review.cooldown_id, rel=args.relationship))
 
 
 def cmd_boundary_add(args: argparse.Namespace, db: Database) -> None:
     bid = db.add_boundary(args.description, args.severity, args.keywords)
-    print(f"Added boundary {bid}: {args.description} [{args.severity}]")
+    print(t("boundary_added", id=bid, desc=args.description, sev=args.severity))
 
 
 def cmd_boundary_hit(args: argparse.Namespace, db: Database) -> None:
     if db.get_boundary(args.boundary_id) is None:
-        sys.exit(f"Error: boundary not found: {args.boundary_id!r}")
+        sys.exit(t("error_boundary_not_found", id=repr(args.boundary_id)))
     rel = resolve_relationship(db, args.relationship)
     hid = db.add_boundary_hit(args.boundary_id, rel.id, args.evidence)
-    print(
-        f"Recorded boundary hit {hid} "
-        f"(boundary {args.boundary_id}, relationship {rel.id})"
-    )
+    print(t("boundary_hit_recorded", id=hid, bid=args.boundary_id, rid=rel.id))
 
 
 def cmd_boundary_retire(args: argparse.Namespace, db: Database) -> None:
     if not db.deactivate_boundary(args.boundary_id):
-        sys.exit(f"Error: boundary not found: {args.boundary_id!r}")
-    print(
-        f"Retired boundary {args.boundary_id}. Past hits remain in the audit "
-        f"trail; `lre list` still shows it as inactive."
-    )
+        sys.exit(t("error_boundary_not_found", id=repr(args.boundary_id)))
+    print(t("boundary_retired", id=args.boundary_id))
 
 
 def cmd_list(_args: argparse.Namespace, db: Database) -> None:
     rels = db.list_relationships()
-    print("Relationships:")
+    print(t("list_relationships"))
     if not rels:
-        print("  (none)")
+        print(t("list_none"))
     for r in rels:
         print(f"  {r.id}  {r.alias}  [{r.status}]  {r.kind}")
     print("")
-    print("Boundaries:")
+    print(t("list_boundaries"))
     bounds = db.list_boundaries(active_only=False)
     if not bounds:
-        print("  (none)")
+        print(t("list_none"))
     for b in bounds:
-        flag = "ACTIVE" if b.active else "inactive"
+        flag = t("list_active") if b.active else t("list_inactive")
         print(f"  {b.id}  [{b.severity}] {b.description} ({flag})")
 
 
@@ -518,7 +508,7 @@ def cmd_state_set(args: argparse.Namespace, db: Database) -> None:
     if args.emotional is not None:
         existing.emotional_state = EmotionalState[args.emotional]
     db.upsert_state(existing)
-    print(f"Updated state for {rid}")
+    print(t("state_updated", rid=rid))
 
 
 def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
@@ -543,16 +533,18 @@ def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
     if new_total > old_total and not args.override:
         active = _active_cooldowns(db, rid)
         if active:
-            print("BLOCKED: an active cooldown prevents raising exposure.")
+            print(t("cooldown_blocked"))
             for cd in active:
                 print(
-                    f"  - {cd.id} [{cd.decision}] {format_remaining(cd)} "
-                    f"(reason: {cd.reason or 'n/a'})"
+                    t(
+                        "cooldown_line",
+                        id=cd.id,
+                        decision=cd.decision,
+                        remaining=format_remaining(cd),
+                        reason=cd.reason or "n/a",
+                    )
                 )
-            print(
-                "To override (logged for audit): "
-                f'lre exposure set {args.relationship} ... --override --reason "..."'
-            )
+            print(t("cooldown_override_hint", rel=args.relationship))
             return
     if args.override and new_total > old_total:
         active = _active_cooldowns(db, rid)
@@ -564,35 +556,45 @@ def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
             timestamp=utc_now_iso(),
         )
         print(
-            f"OVERRIDE logged: raising exposure {old_total:.1f} -> {new_total:.1f} "
-            f"during cooldown. This is recorded in your audit log."
+            t(
+                "override_logged",
+                old=f"{old_total:.1f}",
+                new=f"{new_total:.1f}",
+            )
         )
 
     db.upsert_exposure(existing)
-    print(f"Updated exposure for {rid} (total {old_total:.1f} -> {new_total:.1f})")
+    print(
+        t(
+            "exposure_updated",
+            rid=rid,
+            old=f"{old_total:.1f}",
+            new=f"{new_total:.1f}",
+        )
+    )
 
 
 def cmd_inconsistency_add(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     iid = db.add_inconsistency(rel.id, args.description)
-    print(f"Recorded inconsistency {iid} for {rel.id}")
+    print(t("inconsistency_recorded", id=iid, rid=rel.id))
 
 
 def cmd_inconsistency_resolve(args: argparse.Namespace, db: Database) -> None:
     ok = db.resolve_inconsistency(args.id, args.resolution, args.note)
     if not ok:
-        sys.exit(f"Error: inconsistency not found: {args.id!r}")
-    print(f"Resolved inconsistency {args.id} as {args.resolution}")
+        sys.exit(t("error_inconsistency_not_found", id=repr(args.id)))
+    print(t("inconsistency_resolve_done", id=args.id, res=args.resolution))
 
 
 def cmd_inconsistency_list(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     rid = rel.id
     items = db.list_inconsistencies(rid, resolved=args.resolved)
-    label = "resolved" if args.resolved else "open"
-    print(f"{label.capitalize()} inconsistencies for {rid}:")
+    label = t("inconsistency_resolved") if args.resolved else t("inconsistency_open")
+    print(t("inconsistency_list_header", label=label, rid=rid))
     if not items:
-        print("  (none)")
+        print(t("inconsistency_none"))
     for it in items:
         head = f"  {it.id} [{it.kind}] {it.description}"
         if args.resolved:
@@ -610,7 +612,7 @@ def cmd_contradictions(args: argparse.Namespace, db: Database) -> None:
     observations = db.get_observations(rid)
     candidates = detect_contradictions(observations)
     if not candidates:
-        print(f"No contradictions detected for {rid}.")
+        print(t("no_contradictions", rid=rid))
         return
     saved = 0
     for idx, c in enumerate(candidates, 1):
@@ -627,33 +629,30 @@ def cmd_contradictions(args: argparse.Namespace, db: Database) -> None:
             mark = "new"
         print(f"{idx}. [{mark}] {c.explanation}")
     if args.save:
-        print(
-            f"\nSaved {saved} new contradiction(s) as inconsistencies. "
-            f"Resolve with: lre inconsistency resolve <id>"
-        )
+        print(t("contradictions_saved", n=saved))
 
 
 def cmd_promises(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     profile = get_profile(rel.kind)
     if profile.promise_window_days is None:
-        print(f"Kind {rel.kind} does not track a promise window.")
+        print(t("promises_no_window", kind=rel.kind))
         return
     observations = db.get_observations(rel.id)
     report = collect_promises(observations, profile.promise_window_days)
     if not report.within and not report.expired:
-        print("No promise claims recorded.")
+        print(t("promises_none"))
         return
-    print(f"Promises for {rel.id} (window: {report.window_days}d):")
+    print(t("promises_cmd_header", rid=rel.id, w=report.window_days))
     if report.within:
-        print("Within window:")
+        print(t("promises_within"))
         for p in report.within:
             print(
                 f"  - {p.attribute}={p.value!r} ({p.observation_id}, "
                 f"{p.timestamp[:10]}, {p.age_days}d)"
             )
     if report.expired:
-        print(f"Expired ({len(report.expired)}):")
+        print(t("promises_expired", n=len(report.expired)))
         for p in report.expired:
             print(
                 f"  - {p.attribute}={p.value!r} ({p.observation_id}, "
@@ -667,28 +666,25 @@ def cmd_chat_import(args: argparse.Namespace, db: Database) -> None:
     try:
         messages = parse_file(args.file)
     except FileNotFoundError:
-        sys.exit(f"Error: chat file not found: {args.file!r}")
+        sys.exit(t("chat_file_missing", file=repr(args.file)))
     except ValueError as exc:
-        sys.exit(f"Error: could not parse {args.file!r}: {exc}")
+        sys.exit(t("chat_parse_error", file=repr(args.file), err=exc))
     if not messages:
-        print(f"No messages parsed from {args.file!r}.")
+        print(t("chat_no_messages", file=repr(args.file)))
         return
     rules = load_claim_rules(args.rules) if args.rules else []
     observations = to_observations(messages, rules, rid, category=args.category)
     n = db.import_observations(rid, observations)
     claim_total = sum(len(o.claims) for o in observations)
-    print(f"Imported {n} observation(s) from {args.file!r} into {rid}.")
-    print(f"Extracted {claim_total} structured claim(s) via {len(rules)} rule(s).")
+    print(t("chat_imported", n=n, file=repr(args.file), rid=rid))
+    print(t("chat_claims", n=claim_total, m=len(rules)))
     # post-analysis: surface contradictions for the user to arbitrate
     all_obs = db.get_observations(rid)
     cands = detect_contradictions(all_obs)
     if cands:
-        print(
-            f"Detected {len(cands)} potential contradiction(s). "
-            f"Review with: lre contradictions {args.relationship} --save"
-        )
+        print(t("chat_conflicts", n=len(cands), rel=args.relationship))
     else:
-        print("No contradictions detected in imported claims.")
+        print(t("chat_clean"))
 
 
 def cmd_timeline(args: argparse.Namespace, db: Database) -> None:
@@ -706,7 +702,7 @@ def cmd_timeline(args: argparse.Namespace, db: Database) -> None:
         state_changes=db.list_state_history(rid),
         exposure_changes=db.list_exposure_history(rid),
     )
-    print(f"Timeline for {rid} ({len(events)} event(s)):")
+    print(t("timeline_header", rid=rid, n=len(events)))
     print(format_timeline(events))
 
 
@@ -738,21 +734,26 @@ def cmd_history(args: argparse.Namespace, db: Database) -> None:
         prev_exposure = ec
 
     if not merged:
-        print("No state or exposure changes recorded yet.")
+        print(t("history_empty"))
         return
     merged.sort(key=lambda entry: (entry[0], entry[1]))
-    print(f"History for {rid}:")
+    print(t("history_header", rid=rid))
     for ts, _id, line in merged:
         print(f"{ts[:16]}  {line}")
 
 
 def cmd_export(args: argparse.Namespace, db: Database) -> None:
     if Path(args.file).exists():
-        sys.exit(f"Error: {args.file!r} already exists — refusing to overwrite.")
+        sys.exit(t("export_exists", file=repr(args.file)))
     bundle, rows, n_tables = save_bundle(db, args.file)
     print(
-        f"Exported {rows} row(s) from {n_tables} table(s) "
-        f"to {args.file} (sha256 {bundle['sha256']})."
+        t(
+            "export_done",
+            n=rows,
+            m=n_tables,
+            file=args.file,
+            sha=bundle["sha256"],
+        )
     )
 
 
@@ -760,37 +761,41 @@ def cmd_restore(args: argparse.Namespace, db: Database) -> None:
     try:
         rows = restore_bundle(db, args.file)
     except (FileNotFoundError, ValueError) as exc:
-        sys.exit(f"Error: cannot restore from {args.file!r}: {exc}")
-    print(f"Restored {rows} row(s) from {args.file}.")
+        sys.exit(t("restore_error", file=repr(args.file), err=exc))
+    print(t("restore_done", n=rows, file=args.file))
 
 
 def cmd_db_check(_args: argparse.Namespace, db: Database) -> None:
     ok, detail, violations = db.integrity_check()
     if ok:
-        print(f"Database OK ({db.path})")
+        print(t("db_ok", path=db.path))
         return
-    print(f"Database problem: {detail}")
+    print(t("db_problem", detail=detail))
     for v in violations:
         print(
-            f"  foreign-key violation: table={v.get('table')} "
-            f"rowid={v.get('rowid')} parent={v.get('parent')}"
+            t(
+                "db_fk_violation",
+                table=v.get("table"),
+                rowid=v.get("rowid"),
+                parent=v.get("parent"),
+            )
         )
-    sys.exit("Database integrity check failed.")
+    sys.exit(t("db_check_failed"))
 
 
 def cmd_verify_add(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     vid = db.add_verification_item(rel.id, args.item)
-    print(f"Added verification item {vid} for {rel.id}: {args.item} [unverified]")
+    print(t("verify_added", id=vid, rid=rel.id, item=args.item))
 
 
 def cmd_verify_list(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     items = db.list_verification_items(rel.id)
     if not items:
-        print(f"No verification items for {rel.id}.")
+        print(t("verify_none", rid=rel.id))
         return
-    print(f"Verification items for {rel.id}:")
+    print(t("verify_header", rid=rel.id))
     for it in items:
         line = f"  {it.id} [{it.status}] {it.item}"
         if it.note:
@@ -800,14 +805,14 @@ def cmd_verify_list(args: argparse.Namespace, db: Database) -> None:
 
 def cmd_verify_check(args: argparse.Namespace, db: Database) -> None:
     if not db.set_verification_status(args.id, "verified"):
-        sys.exit(f"Error: verification item not found: {args.id!r}")
-    print(f"Marked {args.id} as verified.")
+        sys.exit(t("error_verification_not_found", id=repr(args.id)))
+    print(t("verify_checked", id=args.id))
 
 
 def cmd_verify_fail(args: argparse.Namespace, db: Database) -> None:
     if not db.set_verification_status(args.id, "failed", note=args.note):
-        sys.exit(f"Error: verification item not found: {args.id!r}")
-    print(f"Marked {args.id} as failed.")
+        sys.exit(t("error_verification_not_found", id=repr(args.id)))
+    print(t("verify_failed", id=args.id))
 
 
 def cmd_counterfactual(args: argparse.Namespace, db: Database) -> None:
@@ -815,12 +820,12 @@ def cmd_counterfactual(args: argparse.Namespace, db: Database) -> None:
     reviews = db.list_reviews(rel.id)
     if not args.review:
         if not reviews:
-            print(f"No reviews recorded for {rel.id} yet.")
+            print(t("counterfactual_none", rid=rel.id))
             return
-        print(f"Reviews for {rel.id}:")
+        print(t("counterfactual_list_header", rid=rel.id))
         for r in reviews:
             print(f"  {r.id}  {r.timestamp[:16]}  -> {r.recommendation}")
-        print("Re-run one with: lre counterfactual <rel> --review <id>")
+        print(t("counterfactual_hint"))
         return
     try:
         result = run_counterfactual(db, rel.id, args.review)
@@ -828,28 +833,41 @@ def cmd_counterfactual(args: argparse.Namespace, db: Database) -> None:
         sys.exit(f"Error: {exc}")
     ev = result.evidence
     print(
-        f"Counterfactual review of {result.review_id} "
-        f"({result.as_of[:16]}, original: {result.original_recommendation})"
+        t(
+            "counterfactual_header",
+            id=result.review_id,
+            ts=result.as_of[:16],
+            rec=result.original_recommendation,
+        )
     )
     print(
-        f"Evidence frozen at that time: {ev.observation_count} observation(s), "
-        f"{ev.boundary_hit_count} boundary hit(s), "
-        f"{ev.unresolved_inconsistency_count} unresolved inconsistencies"
+        t(
+            "counterfactual_evidence",
+            obs=ev.observation_count,
+            hits=ev.boundary_hit_count,
+            inc=ev.unresolved_inconsistency_count,
+        )
     )
     print(
-        f"  exposure {ev.exposure_total:.1f} | attraction {ev.attraction:.1f} | "
-        f"trust {ev.trust:.1f} | uncertainty {ev.uncertainty:.1f} | "
-        f"emotional {ev.emotional_state}"
+        t(
+            "counterfactual_state",
+            e=f"{ev.exposure_total:.1f}",
+            a=f"{ev.attraction:.1f}",
+            t=f"{ev.trust:.1f}",
+            u=f"{ev.uncertainty:.1f}",
+            em=ev.emotional_state,
+        )
     )
-    print(f"Recomputed with today's rules: {result.recomputed_recommendation}")
+    print(t("counterfactual_recomputed", rec=result.recomputed_recommendation))
     if result.fired_rule_ids:
-        print("  findings at that time: " + ", ".join(result.fired_rule_ids))
-    print("Original vs recomputed: " + ("MATCHED" if result.matched else "DIFFERENT"))
+        print(t("counterfactual_findings", list=", ".join(result.fired_rule_ids)))
     print(
-        "Note: today's thresholds and profiles are applied to past evidence; "
-        "the rules may have changed since the original decision. This is an "
-        "audit tool, not a verdict on your past self."
+        t(
+            "counterfactual_verdict",
+            verdict="MATCHED" if result.matched else "DIFFERENT",
+        )
     )
+    print(t("counterfactual_note"))
 
 
 def cmd_completion(args: argparse.Namespace, _db: Database) -> None:
@@ -866,22 +884,27 @@ def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
     rid = rel.id
     if args.sub == "clear":
         n = db.clear_cooldowns(rid)
-        print(f"Cleared {n} active cooldown(s) for {rid}.")
+        print(t("cooldowns_cleared", n=n, rid=rid))
         return
     # default: list
     now = utc_now_iso()
     active = _active_cooldowns(db, rid)
-    print(f"Active cooldowns for {rid}:")
+    print(t("cooldowns_header", rid=rid))
     if not active:
-        print("  (none)")
+        print(t("list_none"))
     for cd in active:
         print(
-            f"  {cd.id} [{cd.decision}] {format_remaining(cd, now=now)} "
-            f"(reason: {cd.reason or 'n/a'})"
+            t(
+                "cooldown_line",
+                id=cd.id,
+                decision=cd.decision,
+                remaining=format_remaining(cd, now=now),
+                reason=cd.reason or "n/a",
+            )
         )
     overrides = db.list_overrides(rid)
     if overrides:
-        print(f"Override history ({len(overrides)}):")
+        print(t("overrides_header", n=len(overrides)))
         for ov in overrides:
             print(f"  {ov.id} {ov.timestamp} | {ov.reason or '(no reason)'}")
 
@@ -889,10 +912,33 @@ def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
 # ---------------------------------------------------------------------------
 # parser
 # ---------------------------------------------------------------------------
+class _LocalizedHelpFormatter(argparse.HelpFormatter):
+    """argparse hardcodes the 'usage:' label — localize it (i18n phase)."""
+
+    def add_usage(
+        self,
+        usage: str | None,
+        actions: Any,
+        groups: Any,
+        prefix: str | None = None,
+    ) -> None:
+        if prefix is None:
+            prefix = t("help_usage") + ": "
+        super().add_usage(usage, actions, groups, prefix)
+
+
+class LocalizedArgumentParser(argparse.ArgumentParser):
+    """argparse with a localizable 'usage:' label (i18n phase)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("formatter_class", _LocalizedHelpFormatter)
+        super().__init__(*args, **kwargs)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+    p = LocalizedArgumentParser(
         prog="lre",
-        description="LoveRiskEngine - personal relationship decision-support CLI",
+        description=t("help_description"),
     )
     sub = p.add_subparsers(dest="command", required=True)
 

@@ -54,6 +54,7 @@ def test_fires_when_exposure_grew_in_window_without_observations():
     f = detect_rapid_exposure_escalation(history, [], now=NOW)
     assert f is not None
     assert f.rule_id == "rapid_exposure_escalation"
+    assert f.msg_key == "rapid_exposure_escalation"  # localizable by key
     assert f.proposed_decision == "PAUSE"
 
 
