@@ -152,7 +152,7 @@ re-decided here, permanently:
 | Phase | Scope (discharges register items) | Acceptance criteria |
 |---|---|---|
 | **0 — hygiene** *(done this session)* | docs structure, README de-staling, pre-commit installed & verified, audit + this doc | gates green; issue register published |
-| **1 — data safety** | D2 data-home default; D1 export/restore + checksum; D3 `lre db check`; network-import guard test; backup guidance in README | export→restore round-trip test lossless; all gates green |
+| **1 — data safety** *(done 2026-09-01)* | D2 data-home default; D1 export/restore + checksum; D3 `lre db check`; network-import guard test; backup guidance in README | export→restore round-trip lossless; 275 tests; `cli.py`/`export.py`/`paths.py` 100%; gates green |
 | **2 — rigor** | R2 mypy pre-commit hook; R1 version bump; E1 calibration strategy + counterfactual review (roadmap #2); mutual verification checklist (roadmap #3); promise re-promise counting | each slice test-first with its own proposal |
 | **3 — UX & surface** | shell completion; E2 chat-import ordering if cheap; UI form-factor decision (TUI vs Web) executed; config file only if a concrete need appeared | decision recorded in this doc before build |
 

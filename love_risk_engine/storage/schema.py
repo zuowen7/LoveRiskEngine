@@ -18,6 +18,25 @@ existing version — databases in the wild are already stamped with it.
 
 SCHEMA_VERSION = 3
 
+# Insertion order for bulk export/restore: foreign-key parents before children;
+# deletes run in reverse so `PRAGMA foreign_keys = ON` stays satisfied.
+# Package-owned constants — never caller input (see database.py allow-lists).
+TABLE_ORDER = (
+    "relationships",
+    "boundaries",
+    "observations",
+    "observation_claims",
+    "relationship_state",
+    "exposure",
+    "boundary_hits",
+    "inconsistencies",
+    "reviews",
+    "cooldowns",
+    "override_log",
+    "state_history",
+    "exposure_history",
+)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS relationships (
     id          TEXT PRIMARY KEY,

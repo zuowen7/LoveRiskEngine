@@ -25,6 +25,9 @@ Usage:
   lre contradictions <relationship> [--save]    # auto-detect conflicting observations
   lre promises <relationship>                    # promise claims and their ages
   lre history <relationship>                     # state/exposure change log
+  lre export <file>                             # lossless backup bundle
+  lre restore <file>                            # restore (replaces all data)
+  lre db check                                  # integrity checks
   lre chat import <relationship> --file chat.txt [--rules claim_rules.json]
   lre timeline <relationship>                    # chronological event stream
   lre cooldown <relationship> [list|clear]       # precommitment guardrails
@@ -35,6 +38,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from .core.bias_detector import BiasFinding
 from .core.chat_import import (
@@ -58,12 +62,14 @@ from .core.signals import SignalType, suggest_signal_type
 from .core.state import EmotionalState, RelationshipState
 from .core.timeline import build_timeline, format_timeline
 from .core.timeutil import utc_now_iso
+from .services.export import restore_bundle, save_bundle
 from .services.review import analyze, build_context, run_review
 from .storage.database import Database
+from .storage.paths import resolve_db_path
 
 
 def get_db() -> Database:
-    path = os.environ.get("LRE_DB_PATH", "love_risk.db")
+    path = resolve_db_path(os.environ.get("LRE_DB_PATH"))
     db = Database(path)
     db.init()
     return db
@@ -601,6 +607,38 @@ def cmd_history(args: argparse.Namespace, db: Database) -> None:
         print(f"{ts[:16]}  {line}")
 
 
+def cmd_export(args: argparse.Namespace, db: Database) -> None:
+    if Path(args.file).exists():
+        sys.exit(f"Error: {args.file!r} already exists — refusing to overwrite.")
+    bundle, rows, n_tables = save_bundle(db, args.file)
+    print(
+        f"Exported {rows} row(s) from {n_tables} table(s) "
+        f"to {args.file} (sha256 {bundle['sha256']})."
+    )
+
+
+def cmd_restore(args: argparse.Namespace, db: Database) -> None:
+    try:
+        rows = restore_bundle(db, args.file)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.exit(f"Error: cannot restore from {args.file!r}: {exc}")
+    print(f"Restored {rows} row(s) from {args.file}.")
+
+
+def cmd_db_check(_args: argparse.Namespace, db: Database) -> None:
+    ok, detail, violations = db.integrity_check()
+    if ok:
+        print(f"Database OK ({db.path})")
+        return
+    print(f"Database problem: {detail}")
+    for v in violations:
+        print(
+            f"  foreign-key violation: table={v.get('table')} "
+            f"rowid={v.get('rowid')} parent={v.get('parent')}"
+        )
+    sys.exit("Database integrity check failed.")
+
+
 def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     rid = rel.id
@@ -774,6 +812,20 @@ def build_parser() -> argparse.ArgumentParser:
     ph = sub.add_parser("history", help="State/exposure change log for a relationship")
     ph.add_argument("relationship")
 
+    pe = sub.add_parser(
+        "export", help="Export the database to a lossless backup bundle"
+    )
+    pe.add_argument("file")
+
+    pr = sub.add_parser(
+        "restore", help="Restore the database from a backup bundle (replaces all data)"
+    )
+    pr.add_argument("file")
+
+    pdb = sub.add_parser("db", help="Database maintenance")
+    pdb_sub = pdb.add_subparsers(dest="sub", required=True)
+    pdb_sub.add_parser("check", help="Run integrity checks")
+
     pchat = sub.add_parser("chat", help="Local chat import & analysis (offline)")
     pchat_sub = pchat.add_subparsers(dest="sub", required=True)
     pimp = pchat_sub.add_parser("import", help="Import a local chat export")
@@ -828,6 +880,9 @@ DISPATCH = {
     "contradictions": cmd_contradictions,
     "promises": cmd_promises,
     "history": cmd_history,
+    "export": cmd_export,
+    "restore": cmd_restore,
+    "db": {"check": cmd_db_check},
     "chat": {"import": cmd_chat_import},
     "timeline": cmd_timeline,
     "cooldown": cmd_cooldown,

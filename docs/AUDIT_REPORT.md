@@ -159,11 +159,11 @@ refuse — that contrast *is* the positioning.
 
 | # | Sev | Issue | Disposition |
 |---|---|---|---|
-| D1 | P1 | No export/backup command; DB is a single point of loss | `ARCHITECTURE_AND_PLAN.md` phase 1 |
-| D2 | P1 | Default DB path = CWD; data not discoverable | phase 1 (user-data-dir default) |
+| D1 | P1 | No export/backup command; DB is a single point of loss | **Implemented** — `lre export`/`restore` (SHA-256 bundle, lossless round-trip tested) |
+| D2 | P1 | Default DB path = CWD; data not discoverable | **Implemented** — platform data dir + legacy CWD fallback + `LRE_DB_PATH` |
 | R1 | P2 | `pyproject.toml` version 0.1.0 stale | versioning policy, next release |
 | R2 | P2 | pre-commit lacks the mypy hook | add to hook config |
-| D3 | P2 | No `PRAGMA integrity_check` surface | phase 1, paired with export |
+| D3 | P2 | No `PRAGMA integrity_check` surface | **Implemented** — `lre db check` (integrity + foreign-key) |
 | D4 | P2 | Config = env vars only | decision fixed in architecture doc |
 | E1 | P2 | Detector thresholds uncalibrated | calibration strategy; never faked |
 | E2 | P3 | Chat import collapses same-second messages | documented limitation, keep visible |

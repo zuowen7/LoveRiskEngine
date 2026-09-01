@@ -125,6 +125,27 @@ The bands are ordinals (`HIGH / MED / LOW`), never numbers, and the engine
 never uses them to coach a reply. Change a kind with
 `lre relationship set <id> --kind KIND`.
 
+## Data location & backup
+
+The database lives in your platform data directory by default
+(`%LOCALAPPDATA%\LoveRiskEngine` on Windows, `~/Library/Application
+Support/LoveRiskEngine` on macOS, `$XDG_DATA_HOME` or
+`~/.local/share/LoveRiskEngine` on Linux); a legacy `./love_risk.db` in the
+current directory keeps working, and `LRE_DB_PATH` always overrides.
+`lre init` prints the exact path in use.
+
+Backups are one command:
+
+```bash
+lre export backup.json   # lossless JSON bundle, SHA-256 checksummed
+lre restore backup.json  # replaces the whole database; refuses corrupt/wrong-version files
+lre db check             # integrity + foreign-key checks
+```
+
+The bundle contains everything you recorded — treat it like a diary file:
+keep it on encrypted storage and back it up wherever you back up anything
+sensitive.
+
 ## Bias detectors (deliberately uncalibrated heuristics)
 
 | Rule | Trigger |
@@ -380,7 +401,8 @@ Implemented: ✅ contradiction tracker, ✅ evidence-support (quality-calibrated
 ✅ contradiction resolution UX, ✅ cooldown/precommitment guardrails,
 ✅ timeline view, ✅ local chat import & analysis, ✅ top-conflicts in `status`,
 ✅ relationship kinds & per-kind profiles, ✅ promise expiry, ✅ exit-cost
-sensitivity, ✅ state/exposure change history, ✅ rapid exposure escalation.
+sensitivity, ✅ state/exposure change history, ✅ rapid exposure escalation,
+✅ data-home default, ✅ lossless export/restore, ✅ `db check`.
 
 The canonical, reviewed roadmap and target architecture live in
 `docs/ARCHITECTURE_AND_PLAN.md`; the current-state audit (strengths, debt,

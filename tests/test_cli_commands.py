@@ -1113,3 +1113,65 @@ def test_review_fires_rapid_exposure_escalation(run, seeded):
     run("exposure", "set", "Alex", "--time", "4")
     out = run("review", "Alex")
     assert "rapid_exposure_escalation" in out
+
+
+# ---------------------------------------------------------------------------
+# data safety (architecture phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_export_and_restore_cli_roundtrip(run, seeded, tmp_path):
+    run("state", "set", "Alex", "--attraction", "7.5")
+    run("observe", "Alex", "--observation", "original observation")
+    bundle = str(tmp_path / "backup.json")
+    assert "Exported" in run("export", bundle)
+
+    run("observe", "Alex", "--observation", "post-export mutation")
+    assert "post-export mutation" in run("timeline", "Alex")
+
+    assert "Restored" in run("restore", bundle)
+    out = run("timeline", "Alex")
+    assert "original observation" in out
+    assert "post-export mutation" not in out
+
+
+def test_export_refuses_existing_file(run, seeded, tmp_path):
+    bundle = tmp_path / "backup.json"
+    bundle.write_text("do not clobber", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        run("export", str(bundle))
+    assert "already exists" in str(exc.value)
+
+
+def test_restore_rejects_corrupt_file(run, seeded, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"format": "loverisk-bundle", "version": 1}', encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        run("restore", str(bad))
+    assert "checksum" in str(exc.value)
+
+
+def test_db_check_reports_ok(run, seeded):
+    out = run("db", "check")
+    assert "Database OK" in out
+
+
+def test_db_check_reports_foreign_key_violation(run, seeded, db_path, capsys):
+    """A damaged/hand-edited database must fail loudly, never pass silently."""
+    import sqlite3
+
+    # Plant a violation with FK enforcement off (production always has it on).
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT INTO observation_claims(observation_id, attribute, value, idx) "
+        "VALUES ('O999', 'k', 'v', 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(SystemExit) as exc:
+        main(["db", "check"])
+    out = capsys.readouterr().out
+    assert "foreign-key violation" in out
+    assert "integrity check failed" in str(exc.value)

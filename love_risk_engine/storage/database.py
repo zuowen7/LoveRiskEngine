@@ -18,6 +18,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 from ..core.boundaries import Boundary, BoundaryHit
 from ..core.cooldown import Cooldown
@@ -30,7 +31,7 @@ from ..core.relationship import Kind, Relationship
 from ..core.review import Review
 from ..core.signals import SignalType
 from ..core.state import EmotionalState, RelationshipState
-from .schema import SCHEMA, SCHEMA_VERSION
+from .schema import SCHEMA, SCHEMA_VERSION, TABLE_ORDER
 
 # SQL identifiers can never be bound as parameters, so we allow-list them.
 # Adding a table/column to this set is a deliberate, reviewable act.
@@ -150,6 +151,7 @@ class Database:
 
     # --- lifecycle ---
     def connect(self) -> None:
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
@@ -990,3 +992,55 @@ class Database:
             reason=r["reason"],
             timestamp=r["timestamp"],
         )
+
+    # --- bulk export / restore / integrity (architecture phase 1) ---
+    def export_all_tables(self) -> dict[str, list[dict[str, object]]]:
+        """Dump every table as dict rows (bulk primitive; no domain mapping).
+
+        Table names come from `schema.TABLE_ORDER` — package-owned constants,
+        never caller input, so the interpolated identifiers below are safe by
+        construction.
+        """
+        tables: dict[str, list[dict[str, object]]] = {}
+        for table in TABLE_ORDER:
+            rows = self._db.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608
+            tables[table] = [dict(r) for r in rows]
+        return tables
+
+    def restore_all_tables(self, tables: dict[str, list[dict[str, object]]]) -> int:
+        """Replace the entire database with `tables`, all-or-nothing.
+
+        Deletes in FK-child-first order, inserts in parent-first order, inside
+        one transaction. Returns the number of rows restored.
+        """
+        total = 0
+        with self.transaction():
+            for table in reversed(TABLE_ORDER):
+                self._db.execute(f"DELETE FROM {table}")  # noqa: S608
+            for table in TABLE_ORDER:
+                rows = tables.get(table, [])
+                if not rows:
+                    continue
+                columns = list(rows[0].keys())
+                col_names = ",".join(columns)
+                placeholders = ",".join("?" * len(columns))
+                self._db.executemany(
+                    f"INSERT INTO {table} ({col_names}) "  # noqa: S608
+                    f"VALUES ({placeholders})",
+                    [tuple(r.get(c) for c in columns) for r in rows],
+                )
+                total += len(rows)
+        return total
+
+    def integrity_check(self) -> tuple[bool, str, list[dict[str, object]]]:
+        """`PRAGMA integrity_check` + `PRAGMA foreign_key_check`.
+
+        Returns (ok, detail, violations). A damaged or tampered database must
+        fail loudly, never pass silently.
+        """
+        row = self._db.execute("PRAGMA integrity_check").fetchone()
+        detail = str(row[0]) if row else "no result"
+        violations = [
+            dict(v) for v in self._db.execute("PRAGMA foreign_key_check").fetchall()
+        ]
+        return (detail == "ok" and not violations, detail, violations)

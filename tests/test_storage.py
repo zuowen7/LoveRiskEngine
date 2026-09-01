@@ -162,3 +162,74 @@ def test_set_relationship_kind_rejects_unknown_kind(tmp_path):
     with pytest.raises(ValueError):
         db.set_relationship_kind(rid, "SIDEKICK")
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# bulk export / restore / integrity primitives (architecture phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_export_all_tables_covers_every_table(tmp_path):
+    from love_risk_engine.storage.schema import TABLE_ORDER
+
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    assert set(db.export_all_tables()) == set(TABLE_ORDER)
+    db.close()
+
+
+def test_restore_all_tables_replaces_contents(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    db.add_observation(rid, "x", "o", "i", "a", "self", 5.0)
+    snapshot = db.export_all_tables()
+
+    db.add_relationship("Later")
+    assert len(db.list_relationships()) == 2
+    db.restore_all_tables(snapshot)
+    assert len(db.list_relationships()) == 1
+    assert db.export_all_tables() == snapshot
+    db.close()
+
+
+def test_integrity_check_ok_on_fresh_db(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    ok, detail, violations = db.integrity_check()
+    assert ok is True
+    assert detail == "ok"
+    assert violations == []
+    db.close()
+
+
+def test_integrity_check_reports_foreign_key_violation(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "t.db")
+    db = Database(path)
+    db.init()
+    db.add_relationship("Alex")
+    db.add_observation("R001", "x", "o", "i", "a", "self", 5.0)
+    db.close()
+
+    # Plant a violation with FK enforcement off (production always has it on,
+    # so this simulates a damaged or hand-edited file).
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT INTO observation_claims(observation_id, attribute, value, idx) "
+        "VALUES ('O999', 'k', 'v', 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    try:
+        db.init()
+        ok, detail, violations = db.integrity_check()
+        assert ok is False
+        assert violations
+        assert detail == "ok"  # b-tree fine; the violation is in the FK check
+    finally:
+        db.close()
