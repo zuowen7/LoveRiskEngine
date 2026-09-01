@@ -36,8 +36,8 @@ validated.
    from how much *evidence* supports trusting them. Attraction changes never
    auto-modify trust.
 2. **Observation != Interpretation** — every record stores the objective
-   observation, your interpretation, and at least one alternative explanation,
-   plus source and confidence.
+   observation separately; when you add an interpretation, you must also add
+   at least one alternative explanation, plus source and confidence.
 3. **Exposure must not outrun Evidence** — time / emotional / privacy /
    financial / life-decision exposure are tracked separately; when exposure
    grows faster than evidence, a warning fires.
@@ -47,7 +47,8 @@ validated.
 5. **Hard boundaries** — you pre-commit your own lines. A hit can suggest
    `EXIT` **only when backed by recorded evidence**; a single vague observation
    never auto-convicts.
-6. **Bias auditing** — ships 9 detectors (see below).
+6. **Bias auditing** — the decision review ships 9 detectors (see below);
+   a separate five-rule consistency audit never changes the recommendation.
 7. **Privacy first** — local SQLite only, no unnecessary PII, no scraping or
    locating interfaces.
 
@@ -77,6 +78,9 @@ lre inconsistency add Alex --description "Story about Tuesday differs from Wedne
 lre observe Alex --observation "He said he is single" --claim "relationship_status=single"
 lre observe Alex --observation "He mentioned his wife" --claim "relationship_status=married"
 lre contradictions Alex --save     # auto-flag conflicting claims
+lre observe Alex --observation "No reply that evening" \
+    --criterion-key responsiveness --judgment-direction WEAKENS_TRUST
+lre consistency Alex --days 30     # informational record-consistency audit
 lre promises Alex                  # promise claims & ages (windowed kinds)
 lre history Alex                   # state/exposure change log
 lre status Alex
@@ -175,6 +179,23 @@ lre completion zsh > "${fpath[1]}/_lre"   # zsh
 lre completion fish > ~/.config/fish/completions/lre.fish   # fish
 lre completion powershell | Out-String | Invoke-Expression  # PowerShell
 ```
+
+## Self-consistency audit (informational)
+
+`lre consistency <relationship> --days 30` audits recorded judgment hygiene;
+it does not diagnose self-deception and never feeds the decision engine.
+
+- trust changes with no currently recorded observation or verification
+  timestamp between snapshots;
+- interpretations without an alternative explanation (legacy/imported rows);
+- runs of three user-marked `--rationalize` annotations;
+- current unresolved persisted structured conflicts;
+- opposite `SUPPORTS_TRUST` / `WEAKENS_TRUST` directions under the same
+  explicit `--criterion-key`, within or across relationships.
+
+Criterion comparison never guesses from free text. Both structured judgment
+flags are optional, but if one is supplied the other is required. A candidate
+means "review the context", not "a double standard was proved".
 
 ## Bias detectors (deliberately uncalibrated heuristics)
 
@@ -414,9 +435,9 @@ love_risk_engine/
                  love-bombing, cheap/costly signals, promise expiry, rapid
                  exposure escalation) + contradiction tracker + evidence
                  support + relationship profiles + change history + timeline
-                 + cooldown/precommitment + offline chat import
+                 + cooldown/precommitment + offline chat import + consistency audit
   storage/       SQLite schema (versioned migrations) + database access
-  services/      review workflow (auto-creates cooldowns on blocking decisions)
+  services/      review/counterfactual/consistency workflows + lossless export
   cli.py         command-line interface
 examples/        sample claim-rules.json for chat import
 tests/
@@ -434,7 +455,7 @@ Implemented: ✅ contradiction tracker, ✅ evidence-support (quality-calibrated
 sensitivity, ✅ state/exposure change history, ✅ rapid exposure escalation,
 ✅ data-home default, ✅ lossless export/restore, ✅ `db check`,
 ✅ re-promise counting, ✅ counterfactual review, ✅ mutual verification
-checklist.
+checklist, ✅ two-stage self-consistency audit with explicit criterion labels.
 
 The canonical, reviewed roadmap and target architecture live in
 `docs/ARCHITECTURE_AND_PLAN.md`; the current-state audit (strengths, debt,

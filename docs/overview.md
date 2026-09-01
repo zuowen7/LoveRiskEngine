@@ -7,7 +7,8 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
 
 - **Domain model** (dataclasses, `core/`): `RelationshipState` (attraction/trust/uncertainty
   kept strictly separate), `Exposure` (5 independent axes), `Observation`
-  (observation / interpretation / alternative_explanation / source / confidence),
+  (observation / interpretation / alternative_explanation / source / confidence,
+  plus optional explicit criterion/direction labels),
   `Boundary` + `BoundaryHit`, `Inconsistency`.
 - **Bias detectors** (`core/bias_detector.py`): the 5 v0.1 rules, each returning a
   `BiasFinding(rule_id, message, severity, proposed_decision)`. Thresholds are
@@ -125,6 +126,13 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
   history, never calibrated probabilities, never fed back into the engine
   automatically. Personal threshold overrides are the deferred next slice
   (architecture §4).
+- **Two-stage self-consistency audit** (schema v6, `core/consistency.py` +
+  `services/consistency.py` + `lre consistency`): windowed informational rules
+  surface trust changes without newly timestamped evidence, interpretations
+  without alternatives, self-reported rationalization runs, unresolved
+  structured conflicts, and opposite directions under the same explicit
+  criterion. It never diagnoses self-deception or feeds the decision engine;
+  v5 observations migrate to empty/UNSPECIFIED labels without data loss.
 - **Data safety (phase 1)**: platform data-home default with legacy CWD
   fallback; lossless `lre export` / `lre restore` (SHA-256 bundle); `lre db
   check`; executable network-import guard test (invariant #1).
@@ -274,3 +282,5 @@ Two rules worth internalising, both learned the hard way:
    current-rules-on-past-evidence stated honestly).
 3. ~~**Mutual verification checklist**~~ — **implemented** (schema v4,
    `lre verify` group, `Verified facts: N of M` in `status`).
+4. ~~**Self-consistency audit**~~ — **implemented** (schema v6,
+   informational-only `lre consistency`, explicit criterion/direction labels).

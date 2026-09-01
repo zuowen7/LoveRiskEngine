@@ -498,6 +498,81 @@ CATALOG: dict[str, dict[Language, str]] = {
         Language.EN: "Note: today's thresholds and profiles are applied to past evidence; the rules may have changed since the original decision. This is an audit tool, not a verdict on your past self.",
         Language.ZH: "说明：本工具用今天的阈值与画像去审视过去的证据；规则可能已与当初不同。这是审计工具，不是对过去自己的判决。",
     },
+    "consistency_header": {
+        Language.EN: ("Consistency audit for {rid} ({start} to {end}, {days} day(s))"),
+        Language.ZH: "{rid} 的一致性审计（{start} 至 {end}，{days} 天）",
+    },
+    "consistency_none": {
+        Language.EN: (
+            "No recorded consistency signals matched these rules in this window."
+        ),
+        Language.ZH: "这个窗口内没有记录命中这些一致性规则。",
+    },
+    "consistency_note": {
+        Language.EN: (
+            "Note: this report identifies record-level inconsistencies; it is "
+            "not a diagnosis of self-deception, intent, or truth."
+        ),
+        Language.ZH: (
+            "说明：本报告只识别记录层面的不一致，不是对自欺的诊断，也不判断意图或事实真伪。"
+        ),
+    },
+    "trust_change_without_new_evidence": {
+        Language.EN: (
+            "{count} trust change(s) had no currently recorded observation or "
+            "verification timestamp between snapshots; latest "
+            "{previous_id}->{current_id}: {before} -> {after}. This may reflect "
+            "reconsideration of older evidence or a missing record, not "
+            "self-deception."
+        ),
+        Language.ZH: (
+            "有 {count} 次信任变更在两个快照之间没有当前可见的观察或验证时间戳；最近一次 "
+            "{previous_id}->{current_id}：{before} -> {after}。这也可能是重新审视旧证据或漏记依据，不能据此认定自欺。"
+        ),
+    },
+    "interpretation_without_alternative": {
+        Language.EN: (
+            "{count} interpretation(s) have no recorded alternative explanation "
+            "({ids}). This is a one-sided record, not proof that the "
+            "interpretation is wrong."
+        ),
+        Language.ZH: (
+            "有 {count} 条解释没有记录替代解释（{ids}）。这是单侧记录，不证明原解释错误。"
+        ),
+    },
+    "self_reported_rationalization_run": {
+        Language.EN: (
+            "{count} consecutive self-reported rationalization flags were "
+            "recorded. These are user annotations, not automatic psychological "
+            "detection."
+        ),
+        Language.ZH: (
+            "记录了连续 {count} 条用户自报的合理化标记。这些是用户标注，不是自动心理检测。"
+        ),
+    },
+    "unresolved_structured_conflicts": {
+        Language.EN: (
+            "{count} unresolved structured conflict(s) are recorded. This does "
+            "not include semantic conflicts inferred from free text."
+        ),
+        Language.ZH: (
+            "记录中有 {count} 个未解决的结构化冲突；这不包括从自由文本推断的语义冲突。"
+        ),
+    },
+    "criterion_direction_conflict": {
+        Language.EN: (
+            "{count} pair(s) use the same explicit criterion with opposite "
+            "trust directions; first '{criterion}' "
+            "({observation_a}/{relationship_a} {direction_a} vs "
+            "{observation_b}/{relationship_b} {direction_b}). Context may "
+            "justify the difference; this is a review candidate, not a diagnosis."
+        ),
+        Language.ZH: (
+            "有 {count} 对记录在同一显式标准下采用相反的信任方向；第一对为 "
+            "'{criterion}'（{observation_a}/{relationship_a} {direction_a} 对比 "
+            "{observation_b}/{relationship_b} {direction_b}）。情境可能足以解释差异；这只是复核候选，不是诊断。"
+        ),
+    },
     "review_header": {
         Language.EN: "Review {id} for {rid}",
         Language.ZH: "复盘 {id}（关系 {rid}）",
@@ -509,6 +584,10 @@ CATALOG: dict[str, dict[Language, str]] = {
     "panel_review_title": {
         Language.EN: "Review {id} — {rid}",
         Language.ZH: "复盘 {id} — {rid}",
+    },
+    "panel_consistency_title": {
+        Language.EN: "Consistency audit — {rid}",
+        Language.ZH: "一致性审计 — {rid}",
     },
     "review_unresolved": {
         Language.EN: "Unresolved inconsistencies: {n}",
@@ -536,6 +615,22 @@ CATALOG: dict[str, dict[Language, str]] = {
     "error_claim_empty": {
         Language.EN: "Error: --claim attribute is empty in {item}",
         Language.ZH: "错误：{item} 中的 --claim 属性为空",
+    },
+    "error_alternative_required": {
+        Language.EN: (
+            "Error: --alternative is required when --interpretation is supplied"
+        ),
+        Language.ZH: "错误：提供 --interpretation 时必须同时提供 --alternative",
+    },
+    "error_judgment_pair_required": {
+        Language.EN: (
+            "Error: --criterion-key and --judgment-direction must both be supplied"
+        ),
+        Language.ZH: ("错误：--criterion-key 与 --judgment-direction 必须同时提供"),
+    },
+    "error_positive_days": {
+        Language.EN: "Error: --days must be a positive integer",
+        Language.ZH: "错误：--days 必须是正整数",
     },
     "error_boundary_not_found": {
         Language.EN: "Error: boundary not found: {id}",
@@ -566,6 +661,26 @@ CATALOG: dict[str, dict[Language, str]] = {
         Language.ZH: "LoveRiskEngine —— 个人关系决策支持命令行工具",
     },
     "help_usage": {Language.EN: "usage", Language.ZH: "用法"},
+    "help_consistency": {
+        Language.EN: "Audit record-level consistency without changing decisions",
+        Language.ZH: "审计记录层面的一致性，不改变决策",
+    },
+    "help_consistency_days": {
+        Language.EN: "Positive audit window in days (default: 30)",
+        Language.ZH: "审计窗口天数，必须为正整数（默认：30）",
+    },
+    "help_criterion_key": {
+        Language.EN: "Explicit stable criterion key for later comparison",
+        Language.ZH: "用于后续比较的显式稳定标准键",
+    },
+    "help_judgment_direction": {
+        Language.EN: "How this observation explicitly affects trust",
+        Language.ZH: "这条观察如何明确影响信任判断",
+    },
+    "observation_judgment_extra": {
+        Language.EN: " [criterion={criterion} direction={direction}]",
+        Language.ZH: " [标准={criterion} 方向={direction}]",
+    },
 }
 
 

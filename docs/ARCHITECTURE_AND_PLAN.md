@@ -61,10 +61,11 @@ love_risk_engine/
     review/cooldown/override/history/signals          domain objects
     profiles                                          editorial config
     bias_detector/patterns/signals/promises/
-    escalation/contradiction/evidence                 detectors
+    escalation/contradiction/evidence/consistency     detectors
   services/         orchestration (owns storage access)
     review.py       (existing review workflow)
     export.py       phase 1 — lossless export/restore bundle
+    consistency.py  informational self-consistency audit
   storage/          SQLite + versioned migrations; domain objects only
   adapters/         (gated, planned) tui/ or web/ — consume services only
 examples/ tests/ docs/
@@ -108,6 +109,12 @@ checkable and test-enforced (phase 1 guard test).
   cheap-talk/costly-signal boundary.
 - **Promise re-promise counting:** the known S2 limitation (repeated
   re-promising restarts the window without counting) — small, bounded slice.
+- **Self-consistency audit:** inspect record-level mismatches between trust
+  updates, evidence timestamps, alternative explanations, self-reported
+  rationalizations and structured conflicts. Explicit criterion/direction
+  labels may surface opposite applications of the same user-authored
+  standard across relationships. This is an informational audit only: it
+  never diagnoses self-deception and never feeds the decision engine.
 
 ### Roadmap reconciliation (nothing dies silently)
 
@@ -175,6 +182,7 @@ re-decided here, permanently:
 | **2 — rigor** *(done 2026-09-01)* | R2 mypy pre-commit hook; R1 version bump; E1 calibration strategy + counterfactual review (roadmap #2); mutual verification checklist (roadmap #3); promise re-promise counting | 314 tests; `cli.py` / `counterfactual.py` 100%; gates green |
 | **3 — UX & surface** *(done 2026-09-01, except UI)* | shell completion (`lre completion` + runtime engine); E2 chat-import ordering; **UI form-factor decision deferred by the user**; config file skipped (no concrete need appeared) | 328 tests; `cli.py` 100%; gates green |
 | **4 — quality hardening** *(done 2026-09-01)* | pre-push safety net + House Rule #9; layer-boundary matrix + meta-guard; mutation testing (mutmut extra + hand-written guards); stdlib property tests; defensive-branch coverage tests; `core/rulespec.py` + `docs/SCIENTIFIC_FOUNDATIONS.md`; ADR mechanism; `docs/TESTING.md` | 385 tests; coverage 99%; gates green |
+| **5 — self-consistency audit** *(done 2026-09-01)* | windowed record-consistency report; interpretation→alternative input contract; explicit criterion/direction comparison; schema v6 | both stages in `docs/proposals/PLAN_self_consistency_audit.md`; informational-only findings; v5 data-preserving migration; four gates green |
 
 **Debt policy:** nothing ships "temporarily" without a register entry
 (`AUDIT_REPORT.md` §8) plus a doc note; every slice ends with the register

@@ -26,7 +26,7 @@ from ..core.cooldown import Cooldown
 from ..core.exposure import Exposure
 from ..core.history import ExposureChange, StateChange
 from ..core.inconsistency import Inconsistency
-from ..core.observation import Claim, Observation
+from ..core.observation import Claim, JudgmentDirection, Observation
 from ..core.override import OverrideLog
 from ..core.relationship import Kind, Relationship
 from ..core.review import Review
@@ -54,6 +54,8 @@ _VALID_KINDS = frozenset(k.value for k in Kind)
 
 _VALID_VERIFICATION_STATUSES = frozenset(s.value for s in VerificationStatus)
 
+_VALID_JUDGMENT_DIRECTIONS = frozenset(d.value for d in JudgmentDirection)
+
 
 def _validate_kind(kind: str) -> None:
     """Allow-list relationship kinds before they reach the database.
@@ -76,6 +78,16 @@ def _validate_outcome(outcome: str) -> None:
     """Allow-list review outcome labels before they reach the database."""
     if outcome not in VALID_OUTCOMES:
         raise ValueError(f"unknown outcome: {outcome!r}")
+
+
+def _coerce_judgment_direction(
+    direction: JudgmentDirection | str,
+) -> JudgmentDirection:
+    """Allow-list an explicit judgment direction before persistence."""
+    value = direction.value if isinstance(direction, JudgmentDirection) else direction
+    if value not in _VALID_JUDGMENT_DIRECTIONS:
+        raise ValueError(f"unknown judgment direction: {value!r}")
+    return JudgmentDirection(value)
 
 
 def _now() -> str:
@@ -220,6 +232,8 @@ class Database:
             self._migrate_v3_to_v4()
         if version < 5:
             self._migrate_v4_to_v5()
+        if version < 6:
+            self._migrate_v5_to_v6()
         self._set_user_version(SCHEMA_VERSION)
 
     def _migrate_v0_to_v1(self) -> None:
@@ -346,6 +360,24 @@ class Database:
             """
         )
 
+    def _migrate_v5_to_v6(self) -> None:
+        """Add explicit criterion/direction labels to observations.
+
+        Empty/UNSPECIFIED defaults preserve the exact meaning of legacy rows:
+        they did not carry a structured judgment and therefore cannot form a
+        standard-drift candidate.
+        """
+        columns = {
+            row[1]
+            for row in self._db.execute("PRAGMA table_info(observations)").fetchall()
+        }
+        for column, ddl in {
+            "criterion_key": "TEXT NOT NULL DEFAULT ''",
+            "judgment_direction": "TEXT NOT NULL DEFAULT 'UNSPECIFIED'",
+        }.items():
+            if column not in columns:
+                self._db.execute(f"ALTER TABLE observations ADD COLUMN {column} {ddl}")
+
     def __enter__(self) -> Database:
         self.init()
         return self
@@ -424,14 +456,25 @@ class Database:
         claims: list[Claim] | None = None,
         signal_type: SignalType = SignalType.UNSPECIFIED,
         timestamp: str | None = None,
+        criterion_key: str = "",
+        judgment_direction: JudgmentDirection | str = (JudgmentDirection.UNSPECIFIED),
     ) -> str:
+        normalized_criterion = criterion_key.strip()
+        direction = _coerce_judgment_direction(judgment_direction)
+        has_direction = direction is not JudgmentDirection.UNSPECIFIED
+        if bool(normalized_criterion) != has_direction:
+            raise ValueError(
+                "criterion_key and a non-UNSPECIFIED judgment direction "
+                "must be supplied together"
+            )
         oid = _next_id(self, "O", "observations", "id")
         self._db.execute(
             "INSERT INTO observations("
             "id, relationship_id, timestamp, category, observation, "
             "interpretation, alternative_explanation, source, confidence, "
-            "rationalization, inconsistency_flag, signal_type) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "rationalization, inconsistency_flag, signal_type, criterion_key, "
+            "judgment_direction) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 oid,
                 relationship_id,
@@ -445,6 +488,8 @@ class Database:
                 int(bool(rationalization)),
                 int(bool(inconsistency_flag)),
                 signal_type.value,
+                normalized_criterion,
+                direction.value,
             ),
         )
         for idx, c in enumerate(claims or []):
@@ -462,6 +507,13 @@ class Database:
             (relationship_id,),
         ).fetchall()
         return [self._row_to_observation(r) for r in rows]
+
+    def list_all_observations(self) -> list[Observation]:
+        """Return observations across relationships for explicit-key audits."""
+        rows = self._db.execute(
+            "SELECT * FROM observations ORDER BY timestamp, id"
+        ).fetchall()
+        return [self._row_to_observation(row) for row in rows]
 
     def import_observations(
         self, relationship_id: str, observations: list[Observation]
@@ -490,6 +542,8 @@ class Database:
                     claims=o.claims,
                     signal_type=o.signal_type,
                     timestamp=o.timestamp or None,
+                    criterion_key=o.criterion_key,
+                    judgment_direction=o.judgment_direction,
                 )
                 count += 1
         return count
@@ -517,6 +571,8 @@ class Database:
             inconsistency_flag=bool(r["inconsistency_flag"]),
             claims=claims,
             signal_type=SignalType(r["signal_type"]),
+            criterion_key=r["criterion_key"],
+            judgment_direction=JudgmentDirection(r["judgment_direction"]),
         )
 
     # --- state ---

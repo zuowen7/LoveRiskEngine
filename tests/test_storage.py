@@ -1,5 +1,6 @@
 import pytest
 from love_risk_engine.core.exposure import Exposure
+from love_risk_engine.core.observation import JudgmentDirection
 from love_risk_engine.core.state import EmotionalState, RelationshipState
 from love_risk_engine.storage.database import Database
 
@@ -52,6 +53,80 @@ def test_observation_roundtrip(tmp_path):
     assert obs[0].id == oid
     assert obs[0].rationalization is True
     assert obs[0].inconsistency_flag is True
+    db.close()
+
+
+def test_structured_judgment_roundtrip_and_all_relationship_read(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    other_rid = db.add_relationship("Sam")
+    db.add_observation(
+        rid,
+        "communication",
+        "no reply",
+        "dismissive",
+        "could be busy",
+        "self",
+        5.0,
+        criterion_key="  missed reply  ",
+        judgment_direction=JudgmentDirection.WEAKENS_TRUST,
+    )
+    db.add_observation(
+        other_rid,
+        "communication",
+        "gave space",
+        "respectful",
+        "could be disengaged",
+        "self",
+        5.0,
+        criterion_key="missed reply",
+        judgment_direction=JudgmentDirection.SUPPORTS_TRUST,
+    )
+    observations = db.list_all_observations()
+    assert [observation.relationship_id for observation in observations] == [
+        rid,
+        other_rid,
+    ]
+    assert observations[0].criterion_key == "missed reply"
+    assert observations[0].judgment_direction is JudgmentDirection.WEAKENS_TRUST
+    db.close()
+
+
+def test_storage_rejects_unknown_judgment_direction(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    with pytest.raises(ValueError, match="judgment direction"):
+        db.add_observation(
+            rid,
+            "x",
+            "o",
+            "",
+            "",
+            "self",
+            5.0,
+            criterion_key="reply",
+            judgment_direction="INVENTED",
+        )
+    db.close()
+
+
+def test_storage_rejects_unpaired_structured_judgment_fields(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    with pytest.raises(ValueError, match="criterion_key"):
+        db.add_observation(
+            rid,
+            "x",
+            "o",
+            "",
+            "",
+            "self",
+            5.0,
+            criterion_key="reply",
+        )
     db.close()
 
 

@@ -27,7 +27,7 @@ lre relationship add "Alex" --kind LOVER
 ## 3. 每天一圈
 
 ```bash
-# 记录：观察、解释，以及至少一个替代解释。
+# 填写解释时必须同时填写至少一个替代解释；只记事实时可以都不填。
 lre observe Alex --observation "本周两次临时取消约会" \
     --interpretation "对方在失去兴趣" --alternative "最近工作压力大" \
     --confidence 4 --signal-type COSTLY
@@ -36,6 +36,10 @@ lre observe Alex --observation "本周两次临时取消约会" \
 lre observe Alex --observation "他说自己单身" --claim "relationship_status=single"
 lre observe Alex --observation "他提到了妻子" --claim "relationship_status=married"
 lre contradictions Alex --save
+
+# 可选的显式标准标签，让后续比较保持确定、可审计。
+lre observe Alex --observation "当晚没有回复" \
+    --criterion-key responsiveness --judgment-direction WEAKENS_TRUST
 
 # 自己的状态与敞口，严格分开记录。
 lre state set Alex --attraction 8.5 --trust 4 --uncertainty 7 --emotional ANXIOUS
@@ -86,7 +90,11 @@ eval "$(lre completion bash)"          # bash 补全，候选词由安装的 lre
 lre counterfactual Alex                # 列出历史复盘
 lre counterfactual Alex --review RV001 # 用"当时"的证据重跑那次复盘
                                        # （今天的规则、过去的证据）
+lre consistency Alex --days 30         # 仅审计记录一致性；不会改变建议
 ```
+
+一致性审计只报告可观察的记录不一致；它不诊断自欺、不猜自由文本语义，也不认定
+不同情境必然应该得到相同判断。
 
 ## 常见问题
 

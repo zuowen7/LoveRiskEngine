@@ -23,11 +23,11 @@
 ## 核心设计原则
 
 1. **吸引力 ≠ 信任** —— 你喜欢一个人，和"有多少*证据*支撑你信任他"，分开记录。吸引力的变化永远不会自动改写信任。
-2. **观察 ≠ 解释** —— 每条记录都强制三分离：客观观察、你的解释、至少一个替代解释，外加来源与置信度。
+2. **观察 ≠ 解释** —— 客观观察单独记录；一旦填写解释，就必须同时填写至少一个替代解释，外加来源与置信度。
 3. **敞口不能跑赢证据** —— 时间 / 情绪 / 隐私 / 财务 / 重大决定五轴敞口分开追踪；敞口涨得比证据快，就会告警。
 4. **默认动作是继续观察** —— 系统从不默认"信任"或"拒绝"。输出五种状态：`CONTINUE_OBSERVING`、`WAIT`、`PAUSE`、`DECREASE_EXPOSURE`、`EXIT`。
 5. **硬边界** —— 你自己预先画线。边界命中只有在**有记录证据**时才能给出 `EXIT` 建议；单条模糊观察永不自动定罪。
-6. **偏差审计** —— 内置 9 个检测器（见下）。
+6. **偏差审计** —— 决策复盘内置 9 个检测器（见下）；另有五规则一致性审计，但不改变建议。
 7. **隐私优先** —— 仅本地 SQLite，无多余 PII，无爬取、无定位接口，**零网络依赖**。
 
 ## 安装（开发模式）
@@ -56,6 +56,9 @@ lre boundary add --description "从不无视我明说的边界" --severity HARD
 lre observe Alex --observation "他说自己单身" --claim "relationship_status=single"
 lre observe Alex --observation "他提到了妻子" --claim "relationship_status=married"
 lre contradictions Alex --save     # 自动标记冲突声明
+lre observe Alex --observation "当晚没有回复" \
+    --criterion-key responsiveness --judgment-direction WEAKENS_TRUST
+lre consistency Alex --days 30     # 只做记录一致性审计
 lre status Alex
 lre review Alex
 lre history Alex
@@ -99,6 +102,17 @@ lre completion fish > ~/.config/fish/completions/lre.fish   # fish
 lre completion powershell | Out-String | Invoke-Expression  # PowerShell
 ```
 
+## 自我一致性审计（仅提供信息）
+
+`lre consistency <关系> --days 30` 审计已经记录的判断过程；它不诊断自欺，
+也永远不会进入决策引擎。报告包括：没有同期新增证据的信任变更、缺少替代解释的
+历史/导入记录、连续三条用户自报的合理化标记、当前未解决的结构化冲突，以及
+同一显式 `--criterion-key` 下相反的 `SUPPORTS_TRUST` / `WEAKENS_TRUST`
+方向。
+
+系统不猜自由文本语义。两个结构化判断参数可以都不填，但填写时必须成对出现；
+候选项只表示需要复核情境，不证明存在双重标准。
+
 ## 检测器（有意未校准的启发式规则）
 
 | 规则 | 触发条件 |
@@ -133,9 +147,9 @@ lre completion powershell | Out-String | Invoke-Expression  # PowerShell
 love_risk_engine/
   core/          领域模型 + 决策引擎 + 检测器（偏差规则、爱情轰炸、廉价/昂贵信号、
                  承诺过期、敞口快速升级）+ 冲突追踪 + 证据支撑 + 关系画像 +
-                 变更历史 + 时间线 + 冷却护栏 + 离线聊天导入 + i18n
+                 变更历史 + 时间线 + 冷却护栏 + 离线聊天导入 + 一致性审计 + i18n
   storage/       SQLite（版本化迁移）+ 数据访问
-  services/      复盘工作流、反事实复盘、无损导出
+  services/      复盘、反事实复盘、一致性审计工作流、无损导出
   cli.py         命令行界面
 examples/        示例 claim-rules.json
 tests/           340+ 测试，覆盖率 98%+
@@ -148,7 +162,8 @@ docs/           设计系统、审计与架构报告、上手文档、每个已�
 ✅ 矛盾三态了结 ✅ 冷却/预承诺护栏 ✅ 时间线 ✅ 离线聊天导入 ✅ 关系类型与画像
 ✅ 承诺过期 ✅ 退出成本敏感度 ✅ 状态/敞口变更历史 ✅ 敞口快速升级
 ✅ 数据目录默认 ✅ 无损导出/恢复 ✅ `db check` ✅ 再承诺计数 ✅ 反事实复盘
-✅ 互相验证清单 ✅ shell 补全 ✅ 中文界面（i18n）✅ rich 美化（可选）
+✅ 互相验证清单 ✅ 两阶段自我一致性审计 ✅ shell 补全 ✅ 中文界面（i18n）
+✅ rich 美化（可选）
 
 权威路线图与目标架构见 `docs/ARCHITECTURE_AND_PLAN.md`；现状审计（强项、欠账、缺口）
 见 `docs/AUDIT_REPORT.md`；社区调研与 pi agent 架构研究见 `docs/RESEARCH_COMMUNITY.md`。

@@ -29,6 +29,7 @@ Usage:
   lre restore <file>                            # restore (replaces all data)
   lre db check                                  # integrity checks
   lre counterfactual <relationship> [--review ID] # audit a past review
+  lre consistency <relationship> [--days N]       # audit record consistency
   lre verify add <relationship> --item "..."     # mutual verification checklist
   lre verify list <relationship>                #   (check/fail change an item's state)
   lre completion <shell>                        # print a shell completion script
@@ -61,7 +62,7 @@ from .core.history import describe_exposure_change, describe_state_change
 from .core.hooks import ReviewContext
 from .core.i18n import localize_finding, t
 from .core.inconsistency import Inconsistency
-from .core.observation import Claim
+from .core.observation import Claim, JudgmentDirection
 from .core.profiles import RelationshipProfile, get_profile
 from .core.promises import PromiseReport, collect_promises
 from .core.relationship import Kind, Relationship
@@ -69,6 +70,7 @@ from .core.signals import SignalType, suggest_signal_type
 from .core.state import EmotionalState, RelationshipState
 from .core.timeline import build_timeline, format_timeline
 from .core.timeutil import utc_now_iso
+from .services.consistency import run_consistency_audit
 from .services.counterfactual import run_counterfactual
 from .services.export import restore_bundle, save_bundle
 from .services.review import analyze, build_context, run_review
@@ -292,6 +294,17 @@ def cmd_relationship_set(args: argparse.Namespace, db: Database) -> None:
 
 def cmd_observe(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
+    if args.interpretation.strip() and not args.alternative.strip():
+        sys.exit(t("error_alternative_required"))
+    has_criterion = bool(args.criterion_key.strip())
+    has_direction = args.judgment_direction is not None
+    if has_criterion != has_direction:
+        sys.exit(t("error_judgment_pair_required"))
+    direction = (
+        JudgmentDirection[args.judgment_direction]
+        if args.judgment_direction
+        else JudgmentDirection.UNSPECIFIED
+    )
     claims: list[Claim] = []
     for item in args.claim:
         if "=" not in item:
@@ -321,11 +334,44 @@ def cmd_observe(args: argparse.Namespace, db: Database) -> None:
         args.inconsistent,
         claims=claims,
         signal_type=signal_type,
+        criterion_key=args.criterion_key,
+        judgment_direction=direction,
     )
     extra = f" with {len(claims)} claim(s)" if claims else ""
     if signal_type is not SignalType.UNSPECIFIED:
         extra += f" [{signal_type.value}]"
+    if has_criterion:
+        extra += t(
+            "observation_judgment_extra",
+            criterion=args.criterion_key.strip(),
+            direction=direction.value,
+        )
     print(t("observation_recorded", id=oid, rel=rel.id, extra=extra))
+
+
+def cmd_consistency(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    if args.days <= 0:
+        sys.exit(t("error_positive_days"))
+    report = run_consistency_audit(db, rel.id, days=args.days)
+    lines = [
+        t(
+            "consistency_header",
+            rid=rel.id,
+            start=report.start,
+            end=report.end,
+            days=report.days,
+        )
+    ]
+    if report.findings:
+        lines.extend(f"- {localize_finding(finding)}" for finding in report.findings)
+    else:
+        lines.append(t("consistency_none"))
+    lines.append(t("consistency_note"))
+    print_output(
+        "\n".join(lines),
+        title=t("panel_consistency_title", rid=rel.id),
+    )
 
 
 def _compute_status(
@@ -1045,6 +1091,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Structured factual claim as attribute=value (repeatable). "
         "Used by the contradiction tracker.",
     )
+    po.add_argument(
+        "--criterion-key",
+        default="",
+        help=t("help_criterion_key"),
+    )
+    po.add_argument(
+        "--judgment-direction",
+        choices=[
+            direction.name
+            for direction in JudgmentDirection
+            if direction is not JudgmentDirection.UNSPECIFIED
+        ],
+        default=None,
+        help=t("help_judgment_direction"),
+    )
 
     ps = sub.add_parser("status", help="Show relationship status")
     ps.add_argument("relationship")
@@ -1163,6 +1224,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Review id to re-run (default: list reviews)",
     )
 
+    pcons = sub.add_parser("consistency", help=t("help_consistency"))
+    pcons.add_argument("relationship")
+    pcons.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help=t("help_consistency_days"),
+    )
+
     pv = sub.add_parser("verify", help="Mutual verification checklist")
     pv_sub = pv.add_subparsers(dest="sub", required=True)
     pv_add = pv_sub.add_parser("add", help="Add a verifiable fact to confirm")
@@ -1251,6 +1321,7 @@ DISPATCH = {
     "restore": cmd_restore,
     "db": {"check": cmd_db_check},
     "counterfactual": cmd_counterfactual,
+    "consistency": cmd_consistency,
     "verify": {
         "add": cmd_verify_add,
         "list": cmd_verify_list,

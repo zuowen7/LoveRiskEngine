@@ -19,6 +19,15 @@ def _enabled_hooks() -> set[str]:
     return {hook for p in PROFILES.values() for hook in p.enabled_hooks}
 
 
+AUDIT_RULE_IDS = {
+    "trust_change_without_new_evidence",
+    "interpretation_without_alternative",
+    "self_reported_rationalization_run",
+    "unresolved_structured_conflicts",
+    "criterion_direction_conflict",
+}
+
+
 def test_every_enabled_hook_is_registered():
     """A detector wired into any profile must carry a RuleSpec.
 
@@ -39,6 +48,11 @@ def test_every_spec_is_complete():
             f"{spec.rule_id}: threshold_status must stay uncalibrated until "
             "calibration work exists"
         )
+
+
+def test_consistency_audit_rules_are_registered_but_not_decision_hooks():
+    assert set(RULE_SPECS) >= AUDIT_RULE_IDS
+    assert AUDIT_RULE_IDS.isdisjoint(_enabled_hooks())
 
 
 def test_finding_rule_ids_in_core_are_registered():

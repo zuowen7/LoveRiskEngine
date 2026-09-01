@@ -162,6 +162,119 @@ def test_observe_stays_silent_when_markers_are_ambiguous(run, seeded):
     assert "(hint)" not in out
 
 
+def test_observe_rejects_interpretation_without_alternative(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run(
+            "observe",
+            "Alex",
+            "--observation",
+            "no reply",
+            "--interpretation",
+            "does not care",
+        )
+    assert "--alternative is required" in str(exc.value)
+
+
+def test_observe_accepts_fact_only_without_alternative(run, seeded):
+    out = run("observe", "Alex", "--observation", "no reply")
+    assert "Recorded observation" in out
+
+
+@pytest.mark.parametrize(
+    "args, expected",
+    [
+        (("--criterion-key", "reply"), "both be supplied"),
+        (("--judgment-direction", "WEAKENS_TRUST"), "both be supplied"),
+    ],
+)
+def test_observe_requires_both_structured_judgment_flags(run, seeded, args, expected):
+    with pytest.raises(SystemExit) as exc:
+        run("observe", "Alex", "--observation", "no reply", *args)
+    assert expected in str(exc.value)
+
+
+def test_observe_records_structured_judgment_pair(run, seeded):
+    out = run(
+        "observe",
+        "Alex",
+        "--observation",
+        "no reply",
+        "--criterion-key",
+        "reply",
+        "--judgment-direction",
+        "WEAKENS_TRUST",
+    )
+    assert "criterion=reply" in out
+    assert "WEAKENS_TRUST" in out
+
+
+# ---------------------------------------------------------------------------
+# self-consistency audit
+# ---------------------------------------------------------------------------
+
+
+def test_consistency_rejects_non_positive_days(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("consistency", "Alex", "--days", "0")
+    assert "positive integer" in str(exc.value)
+
+
+def test_consistency_renders_empty_state_and_honesty_note(run, seeded):
+    out = run("consistency", "Alex")
+    assert "Consistency audit for R001" in out
+    assert "No recorded consistency signals" in out
+    assert "not a diagnosis of self-deception" in out
+
+
+def test_consistency_renders_trust_gap_finding(run, seeded):
+    run("state", "set", "Alex", "--trust", "2")
+    run("state", "set", "Alex", "--trust", "5")
+    out = run("consistency", "Alex")
+    assert "trust change" in out.lower()
+    assert "2.0 -> 5.0" in out
+    assert "not a diagnosis of self-deception" in out
+
+
+def test_consistency_renders_cross_relationship_criterion_candidate(run, seeded):
+    run("relationship", "add", "Sam")
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "no reply",
+        "--criterion-key",
+        "responsiveness",
+        "--judgment-direction",
+        "WEAKENS_TRUST",
+    )
+    run(
+        "observe",
+        "Sam",
+        "--observation",
+        "gave space",
+        "--criterion-key",
+        "responsiveness",
+        "--judgment-direction",
+        "SUPPORTS_TRUST",
+    )
+    out = run("consistency", "Alex")
+    assert "same explicit criterion" in out
+    assert "O001/R001 WEAKENS_TRUST" in out
+    assert "O002/R002 SUPPORTS_TRUST" in out
+
+
+def test_consistency_finding_and_static_text_localize_to_chinese(
+    run, seeded, monkeypatch
+):
+    run("state", "set", "Alex", "--trust", "2")
+    run("state", "set", "Alex", "--trust", "5")
+    monkeypatch.setenv("LRE_LANG", "zh")
+    out = run("consistency", "Alex")
+    assert "一致性审计" in out
+    assert "信任" in out
+    assert "不是对自欺的诊断" in out
+
+
 # ---------------------------------------------------------------------------
 # status / format_status
 # ---------------------------------------------------------------------------

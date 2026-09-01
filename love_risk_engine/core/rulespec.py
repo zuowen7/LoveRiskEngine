@@ -196,5 +196,62 @@ RULE_SPECS: dict[str, RuleSpec] = {
             basis="Cheap talk vs. costly-signal distinction (no audited anchor).",
             evidence_level=EvidenceLevel.ENGINEERING_HEURISTIC,
         ),
+        RuleSpec(
+            rule_id="trust_change_without_new_evidence",
+            hypothesis=(
+                "Showing trust changes that have no newly recorded evidence "
+                "in the same interval prompts the user to record or "
+                "reconsider the basis of the update."
+            ),
+            basis=(
+                "Record-level temporal consistency check; reconsideration "
+                "of older evidence remains a valid alternative."
+            ),
+            evidence_level=EvidenceLevel.ENGINEERING_HEURISTIC,
+        ),
+        RuleSpec(
+            rule_id="interpretation_without_alternative",
+            hypothesis=(
+                "Surfacing legacy or imported interpretations without an "
+                "alternative reading increases visibility of one-sided records."
+            ),
+            basis=(
+                "Project-specific audit projection of the structured-"
+                "observation mechanism."
+            ),
+            evidence_level=EvidenceLevel.ENGINEERING_HEURISTIC,
+        ),
+        RuleSpec(
+            rule_id="self_reported_rationalization_run",
+            hypothesis=(
+                "Labeling runs of user-marked rationalizations as self-"
+                "reported avoids overstating them as automatic psychological "
+                "detection."
+            ),
+            basis="Project-specific audit of explicit user annotations.",
+            evidence_level=EvidenceLevel.ENGINEERING_HEURISTIC,
+        ),
+        RuleSpec(
+            rule_id="unresolved_structured_conflicts",
+            hypothesis=(
+                "Reporting current unresolved structured conflicts in the "
+                "consistency audit makes their limited, non-semantic scope "
+                "explicit."
+            ),
+            basis=(
+                "Project-specific projection of persisted contradiction candidates."
+            ),
+            evidence_level=EvidenceLevel.ENGINEERING_HEURISTIC,
+        ),
+        RuleSpec(
+            rule_id="criterion_direction_conflict",
+            hypothesis=(
+                "Surfacing opposite trust directions recorded under the same "
+                "explicit criterion makes possible standard drift reviewable "
+                "without inferring free-text meaning."
+            ),
+            basis="Project-specific structured consistency check.",
+            evidence_level=EvidenceLevel.ENGINEERING_HEURISTIC,
+        ),
     )
 }

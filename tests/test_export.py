@@ -13,7 +13,7 @@ import json
 
 import pytest
 from love_risk_engine.core.exposure import Exposure
-from love_risk_engine.core.observation import Claim
+from love_risk_engine.core.observation import Claim, JudgmentDirection
 from love_risk_engine.core.review import Review
 from love_risk_engine.core.signals import SignalType
 from love_risk_engine.core.state import EmotionalState, RelationshipState
@@ -48,6 +48,8 @@ def _seed(db: Database) -> str:
         rationalization=True,
         claims=[Claim("funding", "will fund")],
         signal_type=SignalType.CHEAP,
+        criterion_key="promise_follow_through",
+        judgment_direction=JudgmentDirection.WEAKENS_TRUST,
     )
     bid = db.add_boundary("no lying", severity="HARD")
     db.add_boundary_hit(bid, rid, "denied a message")
@@ -88,6 +90,9 @@ def test_export_restore_roundtrip_is_lossless(tmp_path):
         restored = restore_bundle(dst, bundle_path)
         assert restored > 0
         assert dst.export_all_tables() == expected
+        observation = dst.get_observations("R001")[0]
+        assert observation.criterion_key == "promise_follow_through"
+        assert observation.judgment_direction is JudgmentDirection.WEAKENS_TRUST
     finally:
         dst.close()
 

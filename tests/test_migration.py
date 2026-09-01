@@ -271,3 +271,76 @@ def test_v4_database_gains_review_outcomes(tmp_path):
         .fetchall()
     }
     assert "review_outcomes" in tables
+
+
+def test_v5_database_gains_structured_judgment_columns_with_data_preserved(
+    tmp_path,
+):
+    """A v5 observation survives the v5→v6 column migration unchanged."""
+    path = str(tmp_path / "v5.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE relationships (
+            id TEXT PRIMARY KEY, alias TEXT NOT NULL, status TEXT NOT NULL,
+            created_at TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'LOVER'
+        );
+        CREATE TABLE observations (
+            id TEXT PRIMARY KEY, relationship_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL, category TEXT NOT NULL,
+            observation TEXT NOT NULL, interpretation TEXT NOT NULL DEFAULT '',
+            alternative_explanation TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'self',
+            confidence REAL NOT NULL DEFAULT 5.0,
+            rationalization INTEGER NOT NULL DEFAULT 0,
+            inconsistency_flag INTEGER NOT NULL DEFAULT 0,
+            signal_type TEXT NOT NULL DEFAULT 'UNSPECIFIED'
+        );
+        """
+    )
+    conn.execute("PRAGMA user_version = 5")
+    conn.execute(
+        "INSERT INTO relationships VALUES "
+        "('R001','Alex','ACTIVE','2026-01-01T00:00:00+00:00','LOVER')"
+    )
+    conn.execute(
+        "INSERT INTO observations VALUES "
+        "('O001','R001','2026-01-02T00:00:00+00:00','general','fact',"
+        "'reading','alternative','self',4.0,0,0,'CHEAP')"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    try:
+        db.init()
+        observation = db.get_observations("R001")[0]
+        assert observation.observation == "fact"
+        assert observation.interpretation == "reading"
+        assert observation.criterion_key == ""
+        assert observation.judgment_direction.value == "UNSPECIFIED"
+    finally:
+        db.close()
+
+    assert _version(path) == SCHEMA_VERSION
+    assert {"criterion_key", "judgment_direction"} <= _columns(path, "observations")
+
+
+def test_fresh_and_v5_schema_paths_both_define_structured_judgment_columns(
+    tmp_path,
+):
+    """Meta-guard: canonical DDL and v5 migration are independently required."""
+    fresh_path = str(tmp_path / "fresh-contract.db")
+    fresh = Database(fresh_path)
+    try:
+        fresh.init()
+    finally:
+        fresh.close()
+
+    assert {"criterion_key", "judgment_direction"} <= _columns(
+        fresh_path, "observations"
+    )
+    # The dedicated v5 test above exercises the independent upgrade path. This
+    # assertion pins the current version so deleting that migration cannot be
+    # hidden by leaving the fresh DDL intact.
+    assert SCHEMA_VERSION == 6

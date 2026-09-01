@@ -175,6 +175,7 @@ refuse — that contrast *is* the positioning.
 | C1 | P2 | Detector thresholds uncalibrated; no evaluation data | **Measurement phase implemented** — `lre evaluate` labels + `lre calibration` honest per-rule counts (schema v5); threshold overrides deferred until labeled data exists |
 | C2 | P3 | No open-source license | **Implemented** — Apache-2.0 `LICENSE` + `pyproject` license field |
 | Q1 | P3 | Mutation / property testing was "research only" | **Partially delivered** — mutmut extra + hand-written mutation guards + stdlib property tests + meta-guards (2026-09-01 hardening batch); exhaustive mutmut runs remain WSL/CI-only (upstream #397) |
+| C3 | P2 | No auditable surface for record-level self-consistency; alternative-explanation docs overstated CLI enforcement | **Implemented** — two-stage informational `lre consistency`; conditional interpretation→alternative contract; explicit criterion/direction comparison (schema v6) |
 
 **No P0 issues found.** The P1s are data-safety items and are the first thing
 the optimization plan discharges.
