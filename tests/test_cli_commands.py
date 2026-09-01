@@ -1248,6 +1248,46 @@ def test_review_warning_localizes_to_chinese(run, seeded, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# rich optional presentation (localization phase, part 2)
+# ---------------------------------------------------------------------------
+
+
+def test_rich_panel_preserves_content(monkeypatch):
+    import love_risk_engine.cli as cli
+
+    captured: dict[str, str] = {}
+
+    class FakeConsole:
+        is_terminal = True
+
+        def print(self, obj, **kwargs):
+            captured["text"] = str(obj)
+
+    class FakePanel:
+        def __init__(self, content, title=None, border_style=None):
+            captured["content"] = str(content)
+            captured["title"] = str(title) if title else ""
+
+    monkeypatch.setattr(
+        cli, "_rich_console", type("M", (), {"Console": lambda: FakeConsole()})
+    )
+    monkeypatch.setattr(cli, "_rich_panel", type("M", (), {"Panel": FakePanel}))
+
+    cli.print_output("Line one\nLine two\n", title="T")
+    assert "Line one" in captured["content"]
+    assert "Line two" in captured["content"]
+    assert captured["title"] == "T"
+
+
+def test_rich_fallback_prints_plain(monkeypatch, capsys):
+    import love_risk_engine.cli as cli
+
+    monkeypatch.setattr(cli, "_rich_console", None)
+    cli.print_output("plain text\n", title="ignored")
+    assert capsys.readouterr().out.startswith("plain text")
+
+
+# ---------------------------------------------------------------------------
 # sensitivity direction, boundary seeds, review context (S3)
 # ---------------------------------------------------------------------------
 

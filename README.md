@@ -1,5 +1,7 @@
 # LoveRiskEngine
 
+> [中文 README](README_zh.md) · [Getting started (English)](docs/getting-started.en.md) · [上手文档（中文）](docs/getting-started.zh.md)
+
 A **personal relationship decision-support framework**. It helps you record
 observations, audit your own cognitive biases, track risk exposure, and trigger
 a structured review before major relationship decisions — under conditions of

@@ -169,6 +169,8 @@ refuse — that contrast *is* the positioning.
 | E2 | P3 | Chat import collapses same-second messages | **Implemented** — source timestamps preserved (phase 3) |
 | E3 | P3 | No shell completion / man page | **Implemented** — `lre completion` + runtime engine (phase 3; man page not built — completion covers discovery) |
 | S1 | P2 | Roadmap incoherence (old README list) | resolved by `ARCHITECTURE_AND_PLAN.md` |
+| I1 | P2 | UI is English-only | **Implemented** — i18n via stdlib catalog (`LRE_LANG=zh`), display-time localization, canonical English persisted |
+| I2 | P3 | Plain-text CLI output | **Implemented** — optional `rich` presentation (`pretty` extra, soft import, plain fallback) |
 
 **No P0 issues found.** The P1s are data-safety items and are the first thing
 the optimization plan discharges.

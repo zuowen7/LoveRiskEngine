@@ -19,6 +19,14 @@ dev = [
     "pytest-cov==7.1.0",
     "ruff==0.16.5",
     "mypy==2.3.1",
+    # Pinned like the rest; exercises the optional presentation path in tests.
+    "rich==13.7.1",
+]
+# Optional presentation dependency (architecture invariant #7 amendment):
+# prettier output when installed; the CLI falls back to plain text without it.
+# Core/engine/storage remain stdlib-only either way.
+pretty = [
+    "rich==13.7.1",
 ]
 
 [project.scripts]

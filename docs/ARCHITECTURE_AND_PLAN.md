@@ -31,6 +31,11 @@ style preference:
    savings here.)
 7. **Zero runtime dependencies.** Stdlib-only is a reviewable property; any
    future dependency needs a written justification in a proposal.
+   *(Amended 2026-09-01, i18n/rich phase: `rich` is an **optional**
+   presentation dependency — soft-imported with a plain-text fallback;
+   engine, storage and all logic remain stdlib-only. The required-runtime
+   dependency count stays zero. i18n is stdlib-only by design — a msgid
+   catalog, no gettext toolchain.)*
 8. **Test-first + four gates.** New behavior ships with failing tests first;
    ruff / format / mypy / pytest green; coverage ≥ 95%; `cli.py` 100%.
 9. **Config layering, one data home.** Global data dir > env > defaults; one

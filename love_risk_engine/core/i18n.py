@@ -482,6 +482,14 @@ CATALOG: dict[str, dict[Language, str]] = {
         Language.EN: "Review {id} for {rid}",
         Language.ZH: "复盘 {id}（关系 {rid}）",
     },
+    "panel_status_title": {
+        Language.EN: "LoveRiskEngine — {rid}",
+        Language.ZH: "LoveRiskEngine — {rid}",
+    },
+    "panel_review_title": {
+        Language.EN: "Review {id} — {rid}",
+        Language.ZH: "复盘 {id} — {rid}",
+    },
     "review_unresolved": {
         Language.EN: "Unresolved inconsistencies: {n}",
         Language.ZH: "未解决的矛盾：{n}",

@@ -74,6 +74,18 @@ from .services.review import analyze, build_context, run_review
 from .storage.database import Database
 from .storage.paths import resolve_db_path
 
+# Optional presentation dependency (architecture invariant #7 amendment):
+# prettier output when rich is installed, plain text otherwise. The engine,
+# storage and all logic stay stdlib-only either way.
+_rich_console: Any
+_rich_panel: Any
+try:
+    import rich.console as _rich_console
+    import rich.panel as _rich_panel
+except ImportError:  # pragma: no cover - exercised via the fallback test
+    _rich_console = None
+    _rich_panel = None
+
 
 def get_db() -> Database:
     path = resolve_db_path(os.environ.get("LRE_DB_PATH"))
@@ -232,6 +244,19 @@ def completion_candidates(words: list[str]) -> list[str]:
     return sorted(c for c in candidates if c.startswith(prefix))
 
 
+def print_output(text: str, title: str | None = None) -> None:
+    """Print `text`; when rich is available AND stdout is a terminal, wrap it
+    in a titled panel. The text content is identical either way."""
+    if _rich_console is None:
+        print(text)
+        return
+    console = _rich_console.Console()
+    if not console.is_terminal:
+        print(text)
+        return
+    console.print(_rich_panel.Panel(text.rstrip("\n"), title=title, border_style="dim"))
+
+
 def _active_cooldowns(db: Database, rid: str) -> list[Cooldown]:
     """Return cooldowns that are both flagged active AND not yet expired."""
     now = utc_now_iso()
@@ -324,7 +349,7 @@ def cmd_status(args: argparse.Namespace, db: Database) -> None:
     items = db.list_verification_items(rid)
     verified = sum(1 for i in items if i.status == "verified")
     verification = (verified, len(items)) if items else None
-    print(
+    print_output(
         format_status(
             rid,
             ctx.state,
@@ -340,7 +365,8 @@ def cmd_status(args: argparse.Namespace, db: Database) -> None:
             profile=ctx.profile,
             promises=promises,
             verification=verification,
-        )
+        ),
+        title=t("panel_status_title", rid=rid),
     )
 
 
@@ -440,23 +466,25 @@ def cmd_review(args: argparse.Namespace, db: Database) -> None:
     ctx = build_context(db, rel.id)
     findings, _decision = analyze(ctx)
     review = run_review(db, rel.id, ctx=ctx)
-    print(t("review_header", id=review.id, rid=rel.id))
+    lines: list[str] = [t("review_header", id=review.id, rid=rel.id)]
     context = _profile_context(profile)
     if context:
-        print(t("context_label", context=context))
-    print(f"{t('recommendation_label')} {review.recommendation}")
-    print(t("review_unresolved", n=review.unresolved_inconsistencies))
-    print(t("review_hooks_header"))
+        lines.append(t("context_label", context=context))
+    lines.append(f"{t('recommendation_label')} {review.recommendation}")
+    lines.append(t("review_unresolved", n=review.unresolved_inconsistencies))
+    lines.append(t("review_hooks_header"))
     if review.triggered_hooks:
-        for hook in review.triggered_hooks:
-            print(f"  - {hook}")
+        lines.extend(f"  - {hook}" for hook in review.triggered_hooks)
     else:
-        print(t("review_none"))
-    print(t("review_warnings_header"))
-    for f in findings:
-        print(f"- {localize_finding(f)}")
+        lines.append(t("review_none"))
+    lines.append(t("review_warnings_header"))
+    lines.extend(f"- {localize_finding(f)}" for f in findings)
     if review.cooldown_id:
-        print(t("review_cooldown", id=review.cooldown_id, rel=args.relationship))
+        lines.append(t("review_cooldown", id=review.cooldown_id, rel=args.relationship))
+    print_output(
+        "\n".join(lines),
+        title=t("panel_review_title", id=review.id, rid=rel.id),
+    )
 
 
 def cmd_boundary_add(args: argparse.Namespace, db: Database) -> None:

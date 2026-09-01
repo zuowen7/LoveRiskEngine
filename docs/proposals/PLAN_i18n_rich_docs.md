@@ -1,6 +1,10 @@
 # Implementation Plan — i18n (中文适配) + rich Output + Docs
 
-> Status: **the implementation contract for the localization & polish phase.**
+> Status: **implemented 2026-09-01, test-first per §6 — four-gate green,
+> 342 tests, coverage 98.9%, `cli.py` / `i18n.py` at 100%. Architecture
+> invariant #7 amended (optional rich) and recorded in
+> `ARCHITECTURE_AND_PLAN.md` §1. The contract below is kept verbatim as the
+> record of what was built.**
 > Two architecture decisions are made here and amend
 > `ARCHITECTURE_AND_PLAN.md` (recorded there at the end of this phase):
 >
