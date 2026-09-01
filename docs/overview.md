@@ -128,6 +128,26 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
 - **Data safety (phase 1)**: platform data-home default with legacy CWD
   fallback; lossless `lre export` / `lre restore` (SHA-256 bundle); `lre db
   check`; executable network-import guard test (invariant #1).
+- **Quality-gate hardening** (2026-09-01): pre-push safety net that re-runs
+  the four gates on every push and is unskippable by `--no-verify` (House
+  Rule #9); the layer-boundary guard generalized to a full matrix
+  (core/storage/services forbidden pairs) with a meta-guard that proves the
+  scanner fires; hand-written mutation guards for the EXIT guard, priority
+  order and the fail-open cooldown invariants; stdlib-random property tests
+  for `timeutil` (fixed seed, no `hypothesis` dependency); mutmut configured
+  as an on-demand extra for WSL/CI exhaustive runs.
+- **Rule metadata registry & scientific foundations** (`core/rulespec.py` +
+  `docs/SCIENTIFIC_FOUNDATIONS.md`): every detector declares its theory
+  anchor, evidence level, and uncalibrated threshold status; the foundations
+  doc claims *theory validity only* — construct/mechanism/real-world validity
+  are explicitly not claimed. Doc-contract tests pin the registry↔doc table
+  in both directions, so a new detector cannot ship without stating its
+  basis (or its lack of one).
+- **ADR mechanism** (`docs/adr/` 0001–0003 + guards): immutable
+  architecture decision records (zero runtime deps / layered architecture /
+  scores-are-indicators) with index, numbering, and template-section guards.
+  `docs/TESTING.md` is the testing-philosophy reference, linked from
+  `CONTRIBUTING.md` and guard-pinned.
 
 ## Test results
 

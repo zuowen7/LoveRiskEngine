@@ -42,7 +42,9 @@ style preference:
    database per user, discoverable (phase 1). Adopted from pi's
    global-vs-project layering, simplified for a single-user CLI.
 10. **Docs as contracts.** Every slice keeps its proposal/plan in
-    `docs/proposals/`; this document is amended before deviation, and
+    `docs/proposals/`; load-bearing, hard-to-reverse decisions get an
+    immutable ADR in `docs/adr/` (supersede by writing a new ADR that points
+    back — never rewrite); this document is amended before deviation, and
     `AUDIT_REPORT.md` carries the live issue register.
 11. **Docs carry no driftable hard numbers.** Test counts, detector counts and
     similar claims are either purged from the docs or pinned by executable
@@ -141,9 +143,17 @@ re-decided here, permanently:
 ## 6. Testing & CI policy
 
 - Keep: TDD, four gates, 95% floor, `cli.py` 100%, CI matrix 3.11–3.13.
-- Add (phase 1–2): **no-network-import guard test** (invariant #1,
-  executable); **mypy hook in pre-commit** (issue R2); import-order and
-  boundary guard test for §2 (optional but cheap).
+- **Delivered since (2026-09-01 hardening batch):** the full layer-boundary
+  matrix (`tests/test_invariants.py` — core/storage/services forbidden pairs,
+  plus a meta-guard that injects four import shapes to prove the scanner
+  fires); a **pre-push safety net** re-running the four gates on every push,
+  unskippable by `--no-verify` (House Rule #9); **mutation testing** on two
+  tracks — `mutmut` as an on-demand extra (WSL/CI; not natively Windows,
+  upstream #397) plus hand-written mutation guards that run everywhere;
+  **property-based tests** for `timeutil` using stdlib `random` with a fixed
+  seed (no `hypothesis` dependency); ADR catalog guards in
+  `tests/test_docs.py`. The *why* lives in `docs/TESTING.md`
+  (coverage-as-map, fakes-must-fail, meta-guard pattern).
 - Coverage exclusions stay reviewable: `hooks.py` / `evidence.py` precedent —
   re-justified whenever the files are touched.
 
@@ -164,6 +174,7 @@ re-decided here, permanently:
 | **1 — data safety** *(done 2026-09-01)* | D2 data-home default; D1 export/restore + checksum; D3 `lre db check`; network-import guard test; backup guidance in README | export→restore round-trip lossless; 275 tests; `cli.py`/`export.py`/`paths.py` 100%; gates green |
 | **2 — rigor** *(done 2026-09-01)* | R2 mypy pre-commit hook; R1 version bump; E1 calibration strategy + counterfactual review (roadmap #2); mutual verification checklist (roadmap #3); promise re-promise counting | 314 tests; `cli.py` / `counterfactual.py` 100%; gates green |
 | **3 — UX & surface** *(done 2026-09-01, except UI)* | shell completion (`lre completion` + runtime engine); E2 chat-import ordering; **UI form-factor decision deferred by the user**; config file skipped (no concrete need appeared) | 328 tests; `cli.py` 100%; gates green |
+| **4 — quality hardening** *(done 2026-09-01)* | pre-push safety net + House Rule #9; layer-boundary matrix + meta-guard; mutation testing (mutmut extra + hand-written guards); stdlib property tests; defensive-branch coverage tests; `core/rulespec.py` + `docs/SCIENTIFIC_FOUNDATIONS.md`; ADR mechanism; `docs/TESTING.md` | 385 tests; coverage 99%; gates green |
 
 **Debt policy:** nothing ships "temporarily" without a register entry
 (`AUDIT_REPORT.md` §8) plus a doc note; every slice ends with the register

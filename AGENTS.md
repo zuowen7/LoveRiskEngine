@@ -13,6 +13,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate; POSIX: source .venv/bin/activate
 python -m pip install -e ".[dev]"
 pre-commit install
+pre-commit install --hook-type pre-push   # House Rule #9 safety net
 lre --help
 ruff check .
 ruff format --check .
@@ -34,9 +35,11 @@ Profile context uses `HIGH/MED/LOW`. Scores stay within 0–10 and are evidence 
 
 Use `resolve_db_path()` and retain its legacy-CWD fallback. Create UTC timestamps through `core.timeutil`. Keep `sqlite3.Row` inside storage; persistence helpers use `self._commit()`. Bind SQL values and allow-list identifiers.
 
+Every new detector must register a `RuleSpec` in `core/rulespec.py` (theory anchor, evidence level, `uncalibrated` threshold status) — `tests/test_rulespec.py` fails the build otherwise. Load-bearing, hard-to-reverse decisions get an immutable ADR in `docs/adr/` (supersede by writing a new ADR that points back; never rewrite). Never use `--no-verify` (House Rule #9): the pre-push hook re-runs the four gates and cannot be skipped.
+
 ## Testing Guidelines
 
-Name tests `tests/test_<subject>.py` and `test_<behavior>()`. Test behavior and add a regression for every bug. Prefer real domain objects, `tmp_path`, and `monkeypatch`; call CLI `main(argv)` in-process with temporary `LRE_DB_PATH`. Keep branch coverage at least 95%.
+See `docs/TESTING.md` for the philosophy (coverage as a map, not a score; fakes must be able to fail; mutation guards; property tests; the meta-guard pattern). Name tests `tests/test_<subject>.py` and `test_<behavior>()`. Test behavior and add a regression for every bug. Prefer real domain objects, `tmp_path`, and `monkeypatch`; call CLI `main(argv)` in-process with temporary `LRE_DB_PATH`. Keep branch coverage at least 95%. When you add an invariant/doc test, add the meta-guard that proves it fires.
 
 Every schema change must update canonical DDL, bump `SCHEMA_VERSION`, add one versioned migration, and test previous-version upgrade with data preservation. Export or schema changes also require a same-version lossless export→restore test.
 
