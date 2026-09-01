@@ -233,3 +233,60 @@ def test_integrity_check_reports_foreign_key_violation(tmp_path):
         assert detail == "ok"  # b-tree fine; the violation is in the FK check
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# observation timestamps (architecture phase 3, E2)
+# ---------------------------------------------------------------------------
+
+
+def test_add_observation_preserves_explicit_timestamp(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    db.add_observation(
+        rid,
+        "x",
+        "o",
+        "i",
+        "a",
+        "self",
+        5.0,
+        timestamp="2026-01-01T00:00:00+00:00",
+    )
+    obs = db.get_observations(rid)
+    assert obs[0].timestamp == "2026-01-01T00:00:00+00:00"
+    db.close()
+
+
+def test_import_observations_preserves_source_timestamps(tmp_path):
+    from love_risk_engine.core.chat_import import ChatMessage, to_observations
+
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    messages = [
+        ChatMessage("2026-01-01T10:00:00+00:00", "A", "hi"),
+        ChatMessage("2026-01-02T10:00:00+00:00", "B", "yo"),
+    ]
+    db.import_observations(rid, to_observations(messages, [], rid))
+    rows = db.get_observations(rid)
+    assert [r.timestamp for r in rows] == [
+        "2026-01-01T10:00:00+00:00",
+        "2026-01-02T10:00:00+00:00",
+    ]
+    db.close()
+
+
+def test_import_observations_falls_back_to_now_for_missing_timestamp(tmp_path):
+    from love_risk_engine.core.chat_import import ChatMessage, to_observations
+
+    db = Database(str(tmp_path / "t.db"))
+    db.init()
+    rid = db.add_relationship("Alex")
+    db.import_observations(
+        rid, to_observations([ChatMessage("", "A", "no timestamp")], [], rid)
+    )
+    rows = db.get_observations(rid)
+    assert rows[0].timestamp  # fallback to insertion time, never empty
+    db.close()

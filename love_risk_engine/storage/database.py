@@ -400,6 +400,7 @@ class Database:
         inconsistency_flag: bool = False,
         claims: list[Claim] | None = None,
         signal_type: SignalType = SignalType.UNSPECIFIED,
+        timestamp: str | None = None,
     ) -> str:
         oid = _next_id(self, "O", "observations", "id")
         self._db.execute(
@@ -411,7 +412,7 @@ class Database:
             (
                 oid,
                 relationship_id,
-                _now(),
+                timestamp or _now(),
                 category,
                 observation,
                 interpretation,
@@ -465,6 +466,7 @@ class Database:
                     o.inconsistency_flag,
                     claims=o.claims,
                     signal_type=o.signal_type,
+                    timestamp=o.timestamp or None,
                 )
                 count += 1
         return count

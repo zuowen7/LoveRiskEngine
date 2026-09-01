@@ -166,8 +166,8 @@ refuse — that contrast *is* the positioning.
 | D3 | P2 | No `PRAGMA integrity_check` surface | **Implemented** — `lre db check` (integrity + foreign-key) |
 | D4 | P2 | Config = env vars only | decision fixed in architecture doc |
 | E1 | P2 | Detector thresholds uncalibrated | strategy in `ARCHITECTURE_AND_PLAN.md` §4; **data generator delivered** — counterfactual review (phase 2) |
-| E2 | P3 | Chat import collapses same-second messages | documented limitation, keep visible |
-| E3 | P3 | No shell completion / man page | phase 3 UX polish |
+| E2 | P3 | Chat import collapses same-second messages | **Implemented** — source timestamps preserved (phase 3) |
+| E3 | P3 | No shell completion / man page | **Implemented** — `lre completion` + runtime engine (phase 3; man page not built — completion covers discovery) |
 | S1 | P2 | Roadmap incoherence (old README list) | resolved by `ARCHITECTURE_AND_PLAN.md` |
 
 **No P0 issues found.** The P1s are data-safety items and are the first thing

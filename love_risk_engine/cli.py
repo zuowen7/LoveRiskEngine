@@ -31,6 +31,7 @@ Usage:
   lre counterfactual <relationship> [--review ID] # audit a past review
   lre verify add <relationship> --item "..."     # mutual verification checklist
   lre verify list <relationship>                #   (check/fail change an item's state)
+  lre completion <shell>                        # print a shell completion script
   lre chat import <relationship> --file chat.txt [--rules claim_rules.json]
   lre timeline <relationship>                    # chronological event stream
   lre cooldown <relationship> [list|clear]       # precommitment guardrails
@@ -101,6 +102,132 @@ def _profile_context(profile: RelationshipProfile) -> str | None:
     if profile.voice:
         parts.append(profile.voice)
     return " | ".join(parts)
+
+
+# --- shell completion (architecture phase 3, E3) ---
+# The glue scripts are static; the candidates are computed by the *installed*
+# parser at runtime (`lre _complete`), so command drift is impossible.
+
+_BASH_COMPLETION = """\
+# lre bash completion — install: eval "$(lre completion bash)"
+_lre_completion() {
+    local IFS=$'\\n'
+    COMPREPLY=($(lre _complete "${COMP_WORDS[@]:1}" 2>/dev/null))
+}
+complete -F _lre_completion lre
+"""
+
+_ZSH_COMPLETION = """\
+#compdef lre
+# lre zsh completion — install: lre completion zsh > "${fpath[1]}/_lre"
+_lre() {
+  local -a candidates
+  candidates=("${(@f)$(lre _complete ${words[2,-1]} 2>/dev/null)}")
+  _describe 'lre' candidates
+}
+_lre "$@"
+"""
+
+_FISH_COMPLETION = """\
+# lre fish completion — install:
+#   lre completion fish > ~/.config/fish/completions/lre.fish
+function __lre_complete
+    lre _complete (commandline -opc)[2..-1] (commandline -ct) 2>/dev/null
+end
+complete -c lre -f -a '(__lre_complete)'
+"""
+
+_POWERSHELL_COMPLETION = """\
+# lre PowerShell completion — install:
+#   lre completion powershell | Out-String | Invoke-Expression
+Register-ArgumentCompleter -Native -CommandName lre -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    $elems = $commandAst.CommandElements | Select-Object -Skip 1
+    $tokens = @($elems | ForEach-Object { $_.Extent.Text })
+    $tokens += $wordToComplete
+    lre _complete $tokens 2>$null | ForEach-Object {
+        [CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }
+}
+"""
+
+COMPLETION_SCRIPTS = {
+    "bash": _BASH_COMPLETION,
+    "zsh": _ZSH_COMPLETION,
+    "fish": _FISH_COMPLETION,
+    "powershell": _POWERSHELL_COMPLETION,
+}
+
+
+def _subparsers_action(
+    parser: argparse.ArgumentParser,
+) -> argparse._SubParsersAction | None:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action
+    return None
+
+
+def _completion_parser_for(
+    parser: argparse.ArgumentParser, tokens: list[str]
+) -> argparse.ArgumentParser:
+    """Walk the argparse tree along `tokens`; options consume their value."""
+    current = parser
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        subs = _subparsers_action(current)
+        if subs is not None and token in subs.choices:
+            current = subs.choices[token]
+            i += 1
+            continue
+        for action in current._actions:
+            if token in action.option_strings and action.nargs != 0:
+                i += 1  # the option consumes the following token
+                break
+        i += 1
+    return current
+
+
+def completion_candidates(words: list[str]) -> list[str]:
+    """Candidates for the given command line; the last word is the partial.
+
+    Best-effort by contract: completion is a convenience, never authoritative.
+    No DB lookups in v1 (relationship names/ids are not completed).
+    """
+    prefix = words[-1] if words else ""
+    tokens = words[:-1]
+    parser = build_parser()
+
+    # A trailing option with declared choices completes ITS values.
+    if tokens:
+        last = tokens[-1]
+        trailing_parser = _completion_parser_for(parser, tokens[:-1])
+        for action in trailing_parser._actions:
+            if last in action.option_strings:
+                choices = getattr(action, "choices", None)
+                if choices:
+                    return sorted(
+                        str(choice)
+                        for choice in choices
+                        if str(choice).startswith(prefix)
+                    )
+                break
+
+    current = _completion_parser_for(parser, tokens)
+    candidates: set[str] = set()
+    for action in current._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            candidates.update(
+                name for name in action.choices if not name.startswith("_")
+            )
+        elif action.option_strings:
+            candidates.update(action.option_strings)
+        else:
+            choices = getattr(action, "choices", None)
+            if choices:
+                candidates.update(str(choice) for choice in choices)
+    return sorted(c for c in candidates if c.startswith(prefix))
 
 
 def _active_cooldowns(db: Database, rid: str) -> list[Cooldown]:
@@ -725,6 +852,15 @@ def cmd_counterfactual(args: argparse.Namespace, db: Database) -> None:
     )
 
 
+def cmd_completion(args: argparse.Namespace, _db: Database) -> None:
+    print(COMPLETION_SCRIPTS[args.shell], end="")
+
+
+def cmd_internal_complete(args: argparse.Namespace, _db: Database) -> None:
+    for candidate in completion_candidates(args.tokens):
+        print(candidate)
+
+
 def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     rid = rel.id
@@ -936,6 +1072,11 @@ def build_parser() -> argparse.ArgumentParser:
     pv_fail.add_argument("id")
     pv_fail.add_argument("--note", default="")
 
+    pcomp = sub.add_parser("completion", help="Print a shell completion script")
+    pcomp.add_argument("shell", choices=sorted(COMPLETION_SCRIPTS))
+    pc_internal = sub.add_parser("_complete", help=argparse.SUPPRESS)
+    pc_internal.add_argument("tokens", nargs=argparse.REMAINDER)
+
     pchat = sub.add_parser("chat", help="Local chat import & analysis (offline)")
     pchat_sub = pchat.add_subparsers(dest="sub", required=True)
     pimp = pchat_sub.add_parser("import", help="Import a local chat export")
@@ -1000,6 +1141,8 @@ DISPATCH = {
         "check": cmd_verify_check,
         "fail": cmd_verify_fail,
     },
+    "completion": cmd_completion,
+    "_complete": cmd_internal_complete,
     "chat": {"import": cmd_chat_import},
     "timeline": cmd_timeline,
     "cooldown": cmd_cooldown,

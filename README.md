@@ -146,6 +146,18 @@ The bundle contains everything you recorded — treat it like a diary file:
 keep it on encrypted storage and back it up wherever you back up anything
 sensitive.
 
+## Shell completion
+
+Candidates are computed by the installed `lre` itself, so completion never
+drifts from the real command surface:
+
+```bash
+eval "$(lre completion bash)"        # bash
+lre completion zsh > "${fpath[1]}/_lre"   # zsh
+lre completion fish > ~/.config/fish/completions/lre.fish   # fish
+lre completion powershell | Out-String | Invoke-Expression  # PowerShell
+```
+
 ## Bias detectors (deliberately uncalibrated heuristics)
 
 | Rule | Trigger |

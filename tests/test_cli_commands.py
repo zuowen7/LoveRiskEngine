@@ -1191,6 +1191,27 @@ def test_status_omits_verified_facts_when_absent(run, seeded):
 
 
 # ---------------------------------------------------------------------------
+# shell completion (architecture phase 3, E3)
+# ---------------------------------------------------------------------------
+
+
+def test_completion_prints_bash_template(run, seeded):
+    out = run("completion", "bash")
+    assert "complete -F _lre_completion lre" in out
+    assert "lre _complete" in out
+
+
+def test_internal_complete_prints_candidates(run, seeded):
+    out = run("_complete", "rel")
+    assert "relationship" in out
+
+
+def test_internal_complete_never_lists_itself(run, seeded):
+    out = run("_complete", "")
+    assert "_complete" not in out
+
+
+# ---------------------------------------------------------------------------
 # sensitivity direction, boundary seeds, review context (S3)
 # ---------------------------------------------------------------------------
 
