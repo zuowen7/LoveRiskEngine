@@ -21,13 +21,29 @@ dev = [
     "ruff==0.16.5",
     "mypy==2.3.1",
     # Pinned like the rest; exercises the optional presentation path in tests.
-    "rich==13.7.1",
+    # Bumped 13.7.1 -> 15.0.0 to satisfy mutmut's textual dependency (the
+    # mutation extra pulls textual, which needs rich>=14.2); verified
+    # compatible with the pretty CLI path (test_i18n/cli green at 15.0.0).
+    "rich==15.0.0",
 ]
 # Optional presentation dependency (architecture invariant #7 amendment):
 # prettier output when installed; the CLI falls back to plain text without it.
 # Core/engine/storage remain stdlib-only either way.
 pretty = [
-    "rich==13.7.1",
+    "rich==15.0.0",
+]
+# Optional mutation-testing extra (safety-critical logic in
+# core/decision.py + core/cooldown.py). Install on demand, never in CI:
+#   pip install -e ".[mutation]" && mutmut run      # Linux/macOS or WSL
+# Note: mutmut 3.x does not run natively on Windows (upstream #397); run it
+# under WSL or in CI. The Windows-runnable, always-on guards live in
+# tests/test_mutation_guard.py and cover the same load-bearing points.
+# Rationale: a surviving mutant is a test that cannot catch a broken
+# implementation — the gap the audit flagged on the cooldown gate.
+mutation = [
+    # Pinned exactly like every other tool (the >=3.0,<4 range is what let
+    # textual sneak in and force the rich bump); mutmut runs on WSL/CI only.
+    "mutmut==3.7.0",
 ]
 
 [project.scripts]
@@ -149,3 +165,20 @@ exclude_lines = [
 
 [tool.coverage.paths]
 source = ["love_risk_engine", "*/love_risk_engine"]
+
+# ---------------------------------------------------------------------------
+# Mutmut: mutation testing for the safety-critical decision/cooldown logic.
+# Run on demand (never in CI — it is slow by design):
+#   pip install -e ".[mutation]"
+#   mutmut run            # generate + test mutants (first run is the slow one)
+#   mutmut results        # list surviving mutants
+#   mutmut show <id>      # inspect a survivor, then add a failing test
+# A surviving mutant = a test that cannot detect a broken implementation.
+# Fix by adding a test that fails on the mutant, not by silencing it.
+# ---------------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = [
+    "love_risk_engine/core/decision.py",
+    "love_risk_engine/core/cooldown.py",
+]
+tests_dir = ["tests"]

@@ -8,7 +8,7 @@ corresponds to a defect we actually shipped or nearly shipped.
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-pip install pre-commit && pre-commit install
+pip install pre-commit && pre-commit install && pre-commit install --hook-type pre-push
 ```
 
 ## The gate
@@ -129,7 +129,31 @@ events = build_timeline([], db.list_boundary_hits(rid), [], [])  # real objects
 Fakes are for inputs you genuinely cannot construct, not for ones you cannot
 be bothered to.
 
+### 9. Never bypass the gate with `--no-verify`
+
+`git commit --no-verify` (or `-n`) skips pre-commit hooks. For a solo
+developer that is the single biggest self-deception hole: you *know* this
+commit isn't clean, and you ship it anyway because nothing stops you.
+
+It is forbidden. If a hook is genuinely wrong, fix the hook, or temporarily
+disable the specific hook in `.pre-commit-config.yaml` with a comment naming
+the reason — never reach for `--no-verify`.
+
+The safety net: a `pre-push` hook re-runs the four gates before any push.
+`--no-verify` does **not** skip `pre-push`, so even a bypassed commit is
+caught before it leaves your machine. Install it once per clone:
+
+```
+pre-commit install --hook-type pre-push
+```
+
+That second layer is what makes "I'll just skip once" not silent.
+
 ## Tests
+
+See [`docs/TESTING.md`](docs/TESTING.md) for the testing philosophy (coverage
+as a map not a score, mutation guards, property-based tests, the meta-guard
+pattern). The rules below are the quick-reference.
 
 - Test behaviour, not implementation. Assert on what the user sees.
 - Use the `db` fixture (see `tests/test_database_integrity.py`) instead of

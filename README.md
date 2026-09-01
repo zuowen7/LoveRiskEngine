@@ -18,6 +18,18 @@ incomplete information.
 - Not a social-engineering database, PII scraper, or black/grey-market lookup.
 - Not an AI that unilaterally declares someone "good" or "bad".
 
+## Scientific grounding (theory-informed engineering)
+
+LoveRiskEngine is informed by research in judgment and decision-making,
+interpersonal trust, self-regulation, and behavioral economics. The mapping
+from each design decision to its literature anchor — and, just as
+importantly, which rules have **no** anchor and remain engineering
+heuristics — is maintained in
+[docs/SCIENTIFIC_FOUNDATIONS.md](docs/SCIENTIFIC_FOUNDATIONS.md) and pinned
+by doc-contract tests. Its specific thresholds and scoring rules are
+engineering heuristics and have not been clinically or empirically
+validated.
+
 ## Core design principles
 
 1. **Attraction != Trust** — how much you like someone is tracked separately

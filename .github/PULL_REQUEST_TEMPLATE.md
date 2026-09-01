@@ -15,6 +15,8 @@ not a substitute for the green checkmark.
 - [ ] `mypy love_risk_engine` passes (disallow_untyped_defs = true)
 - [ ] `pytest` passes
 - [ ] Coverage stays at or above **95%** (`coverage report --fail-under=95`)
+- [ ] No `--no-verify` was used to bypass hooks (House Rule #9); the
+      `pre-push` safety net is installed (`pre-commit install --hook-type pre-push`)
 
 ## Domain guardrails (this is a decision-support tool, not a rating tool)
 

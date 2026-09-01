@@ -55,3 +55,14 @@ def test_mixed_offsets_compare_by_instant_not_by_string():
 def test_parse_iso_returns_none_for_empty_or_invalid():
     assert parse_iso("") is None
     assert parse_iso("garbage") is None
+
+
+def test_is_future_returns_false_when_now_is_malformed():
+    """A malformed `now` reference makes is_future fail open (return False).
+
+    A corrupt reference time can never make an expired cooldown look live, or
+    a live cooldown look expired — the comparison refuses rather than guesses
+    (timeutil.py:59).
+    """
+    future_ts = "2999-01-01T00:00:00+00:00"
+    assert is_future(future_ts, now="not-a-timestamp") is False

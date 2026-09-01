@@ -43,6 +43,16 @@ def test_env_invalid_falls_back_to_default(monkeypatch):
     assert cooldown_hours_for(Decision.PAUSE) == 24
 
 
+def test_env_zero_or_negative_falls_back_to_default(monkeypatch):
+    """LRE_COOLDOWN_HOURS=0 (or negative) is not a usable duration, so it
+    falls back to the per-decision default rather than zeroing the cooldown
+    (cooldown.py:47->49 — the `hours > 0` guard's false branch)."""
+    monkeypatch.setenv("LRE_COOLDOWN_HOURS", "0")
+    assert cooldown_hours_for(Decision.PAUSE) == 24
+    monkeypatch.setenv("LRE_COOLDOWN_HOURS", "-5")
+    assert cooldown_hours_for(Decision.EXIT) == 72
+
+
 def test_is_active_logic():
     from datetime import datetime, timedelta
 

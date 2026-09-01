@@ -44,3 +44,35 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+      # Safety net for House Rule #9 (no --no-verify). --no-verify skips
+      # pre-commit but NOT pre-push. These re-run the full gate on push so a
+      # bypassed commit is caught before it leaves the machine. Install with:
+      #   pre-commit install --hook-type pre-push
+      - id: push-ruff
+        name: ruff check (on push)
+        entry: ruff check .
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true
+      - id: push-ruff-format
+        name: ruff format --check (on push)
+        entry: ruff format --check .
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true
+      - id: push-mypy
+        name: mypy (on push)
+        entry: mypy love_risk_engine
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true
+      - id: push-pytest
+        name: pytest (on push)
+        entry: python -m pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true

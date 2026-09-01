@@ -77,6 +77,15 @@ def test_empty_claims_ignored():
     assert detect_contradictions(obs) == []
 
 
+def test_intra_observation_conflicting_claims_not_reported():
+    """A single observation with two claims on the same attribute but
+    different values does not contradict itself — the cross-observation
+    pairing skips same-id pairs (contradiction.py:62). Surfacing this would
+    be a false positive: both claims came from the same source."""
+    obs = [_obs("O001", [("status", "single"), ("status", "married")])]
+    assert detect_contradictions(obs) == []
+
+
 def test_contradiction_key_is_order_independent():
     assert contradiction_key("status", "O001", "O002") == contradiction_key(
         "status", "O002", "O001"
