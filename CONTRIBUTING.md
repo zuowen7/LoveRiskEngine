@@ -101,7 +101,7 @@ Migrating `list_boundary_hits` from `sqlite3.Row` to `BoundaryHit` broke
 exactly one caller:
 
 ```python
-ts = h["timestamp"] if "timestamp" in h.keys() else ""   # AttributeError
+ts = h["timestamp"] if "timestamp" in h.keys() else ""  # AttributeError
 ```
 
 inside `build_timeline`, reached only by `lre timeline`, which had **0%
@@ -123,7 +123,7 @@ When a function consumes something the layer above it produces, feed it the
 real return value at least once:
 
 ```python
-events = build_timeline([], db.list_boundary_hits(rid), [], [])   # real objects
+events = build_timeline([], db.list_boundary_hits(rid), [], [])  # real objects
 ```
 
 Fakes are for inputs you genuinely cannot construct, not for ones you cannot

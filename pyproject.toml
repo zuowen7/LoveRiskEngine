@@ -12,10 +12,13 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.6",
-    "mypy>=1.8",
+    # Pinned exactly so CI, pre-commit and local runs all use the same tool
+    # versions — the unpinned `>=` ranges drifted once (ruff 0.6 vs 0.16
+    # format differences broke CI on markdown code blocks) and cost a red run.
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
 ]
 
 [project.scripts]

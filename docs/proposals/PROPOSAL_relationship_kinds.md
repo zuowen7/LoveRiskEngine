@@ -56,14 +56,15 @@ A dataclass registry, not a factory:
 @dataclass(frozen=True)
 class RelationshipProfile:
     kind: Kind
-    enabled_hooks: tuple[str, ...]        # which detectors run for this kind
-    promise_window_days: int | None       # display window for promise claims
-    power_asymmetry: Ordinal              # HIGH / MED / LOW — context only
-    exit_cost: Ordinal                    # HIGH / MED / LOW — sensitivity direction
-    boundary_seeds: tuple[str, ...]       # suggested default boundaries at creation
-    voice: str                            # phrasing guidance for warnings
+    enabled_hooks: tuple[str, ...]  # which detectors run for this kind
+    promise_window_days: int | None  # display window for promise claims
+    power_asymmetry: Ordinal  # HIGH / MED / LOW — context only
+    exit_cost: Ordinal  # HIGH / MED / LOW — sensitivity direction
+    boundary_seeds: tuple[str, ...]  # suggested default boundaries at creation
+    voice: str  # phrasing guidance for warnings
 
-PROFILES: dict[Kind, RelationshipProfile] = { ... }
+
+PROFILES: dict[Kind, RelationshipProfile] = {...}
 ```
 
 Hard rules for the registry:

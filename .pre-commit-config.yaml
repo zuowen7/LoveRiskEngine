@@ -5,7 +5,9 @@
 # a human ever reads the diff.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Keep in sync with pyproject.toml [project.optional-dependencies].dev —
+    # both pin the same ruff version (see the pinning note there).
+    rev: v0.16.5
     hooks:
       - id: ruff
         name: ruff (lint, autofix)

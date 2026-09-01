@@ -167,10 +167,11 @@ class Sensitivity(StrEnum):
     NORMAL = "NORMAL"
     HIGH_EXIT_COST = "HIGH_EXIT_COST"
 
-ATTRACTION_TRUST_GAP                = 3.0   # unchanged default
+
+ATTRACTION_TRUST_GAP = 3.0  # unchanged default
 ATTRACTION_TRUST_GAP_HIGH_EXIT_COST = 2.0
-RATIONALIZATION_RUN                 = 3     # unchanged default
-RATIONALIZATION_RUN_HIGH_EXIT_COST  = 2
+RATIONALIZATION_RUN = 3  # unchanged default
+RATIONALIZATION_RUN_HIGH_EXIT_COST = 2
 ```
 
 Only two rules shift — the two with clean scalar thresholds
