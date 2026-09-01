@@ -132,6 +132,8 @@ class Database:
         self.path = path
         self.conn: sqlite3.Connection | None = None
         self._tx_depth = 0
+        self._savepoint_counter = 0
+        self._tx_broken = False
 
     @property
     def _db(self) -> sqlite3.Connection:
@@ -160,23 +162,103 @@ class Database:
 
     @contextlib.contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Group writes into one atomic unit: all-or-nothing, and faster.
+        """Own an atomic write scope, using savepoints when scopes nest.
 
         Without this, a bulk import that fails halfway leaves partial data
-        behind and pays a commit (fsync) per row. Nesting is supported: only
-        the outermost block commits, and any failure rolls back the lot.
+        behind and pays a commit (fsync) per row. The outermost scope alone
+        owns BEGIN/commit/rollback. A nested scope releases its savepoint on
+        success and rolls back only to that savepoint on failure; an exception
+        that escapes the outer scope still rolls back the complete unit.
+
+        The yielded connection is for SQL execution, not direct transaction
+        control. An already-active unmanaged transaction is rejected rather
+        than silently adopted or committed.
         """
         conn = self._db
+        outermost = self._tx_depth == 0
+        savepoint: str | None = None
+
+        if outermost:
+            if conn.in_transaction:
+                raise RuntimeError(
+                    "Database connection already has an active transaction; "
+                    "commit or roll it back before entering transaction()."
+                )
+            conn.execute("BEGIN")
+            self._tx_broken = False
+        else:
+            if self._tx_broken or not conn.in_transaction:
+                self._tx_broken = True
+                raise RuntimeError(
+                    "Managed outer transaction is no longer usable; exit it "
+                    "without starting another nested transaction."
+                )
+            self._savepoint_counter += 1
+            savepoint = f"lre_nested_{self._savepoint_counter}"
+            try:
+                conn.execute(f"SAVEPOINT {savepoint}")  # noqa: S608
+            except BaseException:
+                # A nested boundary that cannot be established makes the
+                # enclosing transaction unsafe to commit if the caller catches
+                # this error and continues.
+                self._tx_broken = True
+                raise
+
         self._tx_depth += 1
         try:
             yield conn
-        except Exception:
-            self._tx_depth -= 1
-            conn.rollback()
+        except BaseException:
+            try:
+                if outermost:
+                    conn.rollback()
+                else:
+                    assert savepoint is not None
+                    try:
+                        conn.execute(  # noqa: S608
+                            f"ROLLBACK TO SAVEPOINT {savepoint}"
+                        )
+                        conn.execute(f"RELEASE SAVEPOINT {savepoint}")  # noqa: S608
+                    except BaseException:
+                        # If savepoint cleanup itself fails, the nested boundary
+                        # can no longer be trusted. Roll back the whole
+                        # connection and make a caught error poison the outer
+                        # scope rather than allowing a partial commit.
+                        self._tx_broken = True
+                        conn.rollback()
+                        raise
+            finally:
+                self._tx_depth -= 1
+                if outermost:
+                    self._tx_broken = False
             raise
         else:
-            self._tx_depth -= 1
-            conn.commit()
+            try:
+                if outermost:
+                    if self._tx_broken or not conn.in_transaction:
+                        conn.rollback()
+                        raise RuntimeError(
+                            "Managed transaction boundary was lost inside "
+                            "transaction(); direct commit/rollback is not allowed."
+                        )
+                    try:
+                        conn.commit()
+                    except BaseException:
+                        conn.rollback()
+                        raise
+                else:
+                    assert savepoint is not None
+                    try:
+                        conn.execute(  # noqa: S608
+                            f"RELEASE SAVEPOINT {savepoint}"
+                        )
+                    except BaseException:
+                        self._tx_broken = True
+                        conn.rollback()
+                        raise
+            finally:
+                self._tx_depth -= 1
+                if outermost:
+                    self._tx_broken = False
 
     # --- lifecycle ---
     def connect(self) -> None:

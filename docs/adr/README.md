@@ -65,3 +65,4 @@ violated. "Trusted on review" is not enforcement.
 - [0001 — Zero runtime dependencies, local-only](0001-zero-runtime-deps-local-only.md)
 - [0002 — Layered architecture and core purity](0002-layered-architecture-core-purity.md)
 - [0003 — Scores are evidence indicators, not probabilities](0003-scores-are-indicators-not-probabilities.md)
+- [0004 — Nested transactions use SQLite savepoints](0004-nested-transactions-use-savepoints.md)

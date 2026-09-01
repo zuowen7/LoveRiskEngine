@@ -78,6 +78,270 @@ def test_transaction_rolls_back_on_failure(db):
     assert db.list_relationships() == []
 
 
+def _insert_relationship(
+    conn: sqlite3.Connection, relationship_id: str, alias: str
+) -> None:
+    conn.execute(
+        "INSERT INTO relationships(id, alias, status, created_at) VALUES (?,?,?,?)",
+        (relationship_id, alias, "ACTIVE", "2026-01-01T00:00:00+00:00"),
+    )
+
+
+def test_nested_success_cannot_commit_before_outer_failure(db):
+    """Regression: an inner success used to commit the whole connection."""
+    with pytest.raises(RuntimeError, match="outer failed"), db.transaction() as outer:
+        _insert_relationship(outer, "R901", "Outer")
+        with db.transaction() as inner:
+            _insert_relationship(inner, "R902", "Inner")
+        raise RuntimeError("outer failed")
+
+    assert db.list_relationships() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_nested_success_commits_with_outer_success(db):
+    with db.transaction() as outer:
+        _insert_relationship(outer, "R901", "Outer")
+        with db.transaction() as inner:
+            _insert_relationship(inner, "R902", "Inner")
+
+    assert [item.id for item in db.list_relationships()] == ["R901", "R902"]
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_propagated_inner_failure_rolls_back_complete_outer_unit(db):
+    with pytest.raises(RuntimeError, match="inner failed"), db.transaction() as outer:
+        _insert_relationship(outer, "R901", "Outer")
+        with db.transaction() as inner:
+            _insert_relationship(inner, "R902", "Inner")
+            raise RuntimeError("inner failed")
+
+    assert db.list_relationships() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_caught_inner_failure_rolls_back_only_its_savepoint(db):
+    with db.transaction() as outer:
+        _insert_relationship(outer, "R901", "Outer before")
+        with (
+            pytest.raises(RuntimeError, match="inner failed"),
+            db.transaction() as inner,
+        ):
+            _insert_relationship(inner, "R902", "Inner")
+            raise RuntimeError("inner failed")
+        _insert_relationship(outer, "R903", "Outer after")
+
+    assert [item.id for item in db.list_relationships()] == ["R901", "R903"]
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_sibling_nested_scope_can_succeed_after_caught_inner_failure(db):
+    with db.transaction() as outer:
+        _insert_relationship(outer, "R901", "Outer")
+        with (
+            pytest.raises(RuntimeError, match="first inner failed"),
+            db.transaction() as failed_inner,
+        ):
+            _insert_relationship(failed_inner, "R902", "Failed inner")
+            raise RuntimeError("first inner failed")
+        with db.transaction() as successful_inner:
+            _insert_relationship(successful_inner, "R903", "Successful inner")
+
+    assert [item.id for item in db.list_relationships()] == ["R901", "R903"]
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_three_level_failure_isolated_to_its_savepoint(db):
+    with db.transaction() as outer:
+        _insert_relationship(outer, "R901", "Outer before")
+        with (
+            pytest.raises(RuntimeError, match="middle failed"),
+            db.transaction() as middle,
+        ):
+            _insert_relationship(middle, "R902", "Middle")
+            with db.transaction() as inner:
+                _insert_relationship(inner, "R903", "Inner")
+            raise RuntimeError("middle failed")
+        _insert_relationship(outer, "R904", "Outer after")
+
+    assert [item.id for item in db.list_relationships()] == ["R901", "R904"]
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_base_exception_rolls_back_and_restores_transaction_state(db):
+    class AbortTransaction(BaseException):
+        pass
+
+    with pytest.raises(AbortTransaction), db.transaction() as conn:
+        _insert_relationship(conn, "R901", "Interrupted")
+        raise AbortTransaction
+
+    assert db.list_relationships() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_commit_failure_rolls_back_and_restores_transaction_state(db):
+    db._db.executescript(
+        """
+        CREATE TABLE tx_parent (id INTEGER PRIMARY KEY);
+        CREATE TABLE tx_child (
+            parent_id INTEGER,
+            FOREIGN KEY (parent_id) REFERENCES tx_parent(id)
+                DEFERRABLE INITIALLY DEFERRED
+        );
+        """
+    )
+
+    with pytest.raises(sqlite3.IntegrityError), db.transaction() as conn:
+        conn.execute("INSERT INTO tx_child(parent_id) VALUES (?)", (999,))
+
+    assert db._db.execute("SELECT * FROM tx_child").fetchall() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_commit_failure_after_nested_success_rolls_back_every_scope(db):
+    db._db.executescript(
+        """
+        CREATE TABLE nested_tx_parent (id INTEGER PRIMARY KEY);
+        CREATE TABLE nested_tx_child (
+            parent_id INTEGER,
+            FOREIGN KEY (parent_id) REFERENCES nested_tx_parent(id)
+                DEFERRABLE INITIALLY DEFERRED
+        );
+        """
+    )
+
+    with (
+        pytest.raises(sqlite3.IntegrityError),
+        db.transaction(),
+        db.transaction() as inner,
+    ):
+        inner.execute("INSERT INTO nested_tx_child(parent_id) VALUES (?)", (999,))
+
+    assert db._db.execute("SELECT * FROM nested_tx_child").fetchall() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_transaction_rejects_an_unmanaged_existing_transaction(db):
+    db._db.execute("BEGIN")
+    _insert_relationship(db._db, "R901", "Unmanaged")
+
+    with (
+        pytest.raises(RuntimeError, match="already has an active transaction"),
+        db.transaction(),
+    ):
+        pass
+
+    assert db._tx_depth == 0
+    assert db._db.in_transaction
+    assert [item.id for item in db.list_relationships()] == ["R901"]
+
+    db._db.rollback()
+    assert db.list_relationships() == []
+
+
+def test_broken_nested_boundary_poisoning_fails_closed(db):
+    """Even forbidden raw rollback cannot let later nested work commit."""
+    with (
+        pytest.raises(RuntimeError, match="Managed transaction boundary was lost"),
+        db.transaction() as outer,
+    ):
+        _insert_relationship(outer, "R901", "Outer before")
+
+        with (
+            pytest.raises(sqlite3.OperationalError, match="no such savepoint"),
+            db.transaction() as inner,
+        ):
+            _insert_relationship(inner, "R902", "Inner")
+            inner.rollback()
+
+        with pytest.raises(RuntimeError, match="no longer usable"), db.transaction():
+            pass
+
+        _insert_relationship(outer, "R903", "Outer after")
+
+    assert db.list_relationships() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_savepoint_creation_failure_poisons_outer_scope(db):
+    def deny_savepoints(
+        action: int,
+        _arg1: str | None,
+        _arg2: str | None,
+        _database: str | None,
+        _trigger: str | None,
+    ) -> int:
+        return (
+            sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_SAVEPOINT
+            else sqlite3.SQLITE_OK
+        )
+
+    with (
+        pytest.raises(RuntimeError, match="Managed transaction boundary was lost"),
+        db.transaction() as outer,
+    ):
+        _insert_relationship(outer, "R901", "Outer")
+        outer.set_authorizer(deny_savepoints)
+        try:
+            with (
+                pytest.raises(sqlite3.DatabaseError, match="not authorized"),
+                db.transaction(),
+            ):
+                pass
+        finally:
+            outer.set_authorizer(None)
+
+    assert db.list_relationships() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_savepoint_cleanup_failure_poisons_outer_scope(db):
+    with (
+        pytest.raises(RuntimeError, match="Managed transaction boundary was lost"),
+        db.transaction() as outer,
+    ):
+        _insert_relationship(outer, "R901", "Outer before")
+
+        with (
+            pytest.raises(sqlite3.OperationalError, match="no such savepoint"),
+            db.transaction() as inner,
+        ):
+            _insert_relationship(inner, "R902", "Inner")
+            inner.rollback()
+            raise RuntimeError("body failed after raw rollback")
+
+        _insert_relationship(outer, "R903", "Outer after")
+
+    assert db.list_relationships() == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
+def test_nested_storage_method_cannot_commit_callers_outer_transaction(db):
+    rid = db.add_relationship("Alex")
+
+    with pytest.raises(RuntimeError, match="outer failed"), db.transaction():
+        db.import_observations(rid, _observations(rid, 2))
+        raise RuntimeError("outer failed")
+
+    assert db.get_observations(rid) == []
+    assert db._tx_depth == 0
+    assert not db._db.in_transaction
+
+
 def test_bulk_import_is_all_or_nothing(db, monkeypatch):
     """A failure part-way through must not leave a half-applied import.
 

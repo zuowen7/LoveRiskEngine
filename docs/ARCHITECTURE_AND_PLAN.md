@@ -9,8 +9,8 @@
 
 ## 1. Architectural invariants (the anti-debt contract)
 
-Every slice from here on must hold these ten. A violation is a defect, not a
-style preference:
+Every slice from here on must hold these invariants. A violation is a defect,
+not a style preference:
 
 1. **`core/` is pure.** No IO except time; never imports `storage`, `services`,
    `cli`, or any network module. Privacy is the product — a CI guard test
@@ -50,6 +50,11 @@ style preference:
     similar claims are either purged from the docs or pinned by executable
     doc-guard tests (`tests/test_docs.py`) that fail the build on drift.
     *(Added 2026-09-01, license/docs/calibration phase.)*
+12. **Managed transactions own explicit boundaries.** The outermost storage
+    transaction alone commits or rolls back the SQLite transaction; nested
+    scopes use savepoints and can never commit outer work. Existing unmanaged
+    transactions are rejected rather than silently adopted. All exceptional
+    exits restore engine state. *(Added 2026-09-01; ADR-0004.)*
 
 ## 2. Target module architecture
 
@@ -93,6 +98,10 @@ checkable and test-enforced (phase 1 guard test).
   TOML file via stdlib `tomllib` under the same layering — still zero
   dependencies. Fixes D4 by decision, not drift.
 - **No compaction, no pruning.** History grows; that is the point.
+- **Composable atomic writes.** `Database.transaction()` starts an explicit
+  outer transaction and maps nested scopes to SQLite savepoints. A caught
+  nested failure rolls back only its scope; an escaping failure rolls back the
+  complete outer unit. See ADR-0004.
 
 ## 4. Engine roadmap (calibrated honesty)
 
@@ -183,6 +192,7 @@ re-decided here, permanently:
 | **3 — UX & surface** *(done 2026-09-01, except UI)* | shell completion (`lre completion` + runtime engine); E2 chat-import ordering; **UI form-factor decision deferred by the user**; config file skipped (no concrete need appeared) | 328 tests; `cli.py` 100%; gates green |
 | **4 — quality hardening** *(done 2026-09-01)* | pre-push safety net + House Rule #9; layer-boundary matrix + meta-guard; mutation testing (mutmut extra + hand-written guards); stdlib property tests; defensive-branch coverage tests; `core/rulespec.py` + `docs/SCIENTIFIC_FOUNDATIONS.md`; ADR mechanism; `docs/TESTING.md` | 385 tests; coverage 99%; gates green |
 | **5 — self-consistency audit** *(done 2026-09-01)* | windowed record-consistency report; interpretation→alternative input contract; explicit criterion/direction comparison; schema v6 | both stages in `docs/proposals/PLAN_self_consistency_audit.md`; informational-only findings; v5 data-preserving migration; four gates green |
+| **6 — transaction integrity** *(done 2026-09-01)* | explicit outer transaction ownership; nested SQLite savepoints; fail-closed cleanup | semantic nesting and fault-injection matrix in `docs/proposals/PLAN_nested_transaction_integrity.md`; ADR-0004; four gates green |
 
 **Debt policy:** nothing ships "temporarily" without a register entry
 (`AUDIT_REPORT.md` §8) plus a doc note; every slice ends with the register
