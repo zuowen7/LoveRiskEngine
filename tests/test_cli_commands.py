@@ -48,12 +48,14 @@ def db_path(tmp_path, monkeypatch):
 
 @pytest.fixture
 def run(db_path, capsys):
-    """Invoke the CLI and return its stdout. Fails loudly on a non-zero exit."""
+    """Invoke the CLI and return stdout after checking its exit contract."""
 
-    def _run(*argv: str) -> str:
+    def _run(*argv: str, expected_code: int = 0) -> str:
         code = main(list(argv))
         out = capsys.readouterr().out
-        assert code == 0, f"`lre {' '.join(argv)}` exited {code}"
+        assert code == expected_code, (
+            f"`lre {' '.join(argv)}` exited {code}; expected {expected_code}"
+        )
         return out
 
     return _run
@@ -571,7 +573,7 @@ def test_exposure_set_updates_every_axis(run, seeded):
 
 
 def test_exposure_raise_is_blocked_during_cooldown(run, cooled_down):
-    out = run("exposure", "set", "Alex", "--time", "5")
+    out = run("exposure", "set", "Alex", "--time", "5", expected_code=1)
     assert "BLOCKED: an active cooldown prevents raising exposure." in out
     assert "C001 [EXIT]" in out
     assert "To override (logged for audit)" in out

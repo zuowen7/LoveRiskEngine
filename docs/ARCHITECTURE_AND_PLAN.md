@@ -55,6 +55,10 @@ not a style preference:
     scopes use savepoints and can never commit outer work. Existing unmanaged
     transactions are rejected rather than silently adopted. All exceptional
     exits restore engine state. *(Added 2026-09-01; ADR-0004.)*
+13. **The installed CLI is a tested system boundary.** In-process command tests
+    own branch coverage; independent black-box journeys own console-script,
+    process-exit and cross-process SQLite verification. The E2E layer imports
+    no application module and never substitutes mocks for storage.
 
 ## 2. Target module architecture
 
@@ -172,6 +176,10 @@ re-decided here, permanently:
   (coverage-as-map, fakes-must-fail, meta-guard pattern).
 - Coverage exclusions stay reviewable: `hooks.py` / `evidence.py` precedent —
   re-justified whenever the files are touched.
+- **Installed-CLI E2E:** five synthetic golden journeys run outside coverage
+  against a non-editable install on Ubuntu and Windows. They assert stdout,
+  stderr, exit codes and canonical final SQLite state; they do not duplicate
+  handler branch testing. See `docs/proposals/PLAN_black_box_e2e.md`.
 
 ## 7. Versioning & release policy
 
@@ -193,6 +201,7 @@ re-decided here, permanently:
 | **4 — quality hardening** *(done 2026-09-01)* | pre-push safety net + House Rule #9; layer-boundary matrix + meta-guard; mutation testing (mutmut extra + hand-written guards); stdlib property tests; defensive-branch coverage tests; `core/rulespec.py` + `docs/SCIENTIFIC_FOUNDATIONS.md`; ADR mechanism; `docs/TESTING.md` | 385 tests; coverage 99%; gates green |
 | **5 — self-consistency audit** *(done 2026-09-01)* | windowed record-consistency report; interpretation→alternative input contract; explicit criterion/direction comparison; schema v6 | both stages in `docs/proposals/PLAN_self_consistency_audit.md`; informational-only findings; v5 data-preserving migration; four gates green |
 | **6 — transaction integrity** *(done 2026-09-01)* | explicit outer transaction ownership; nested SQLite savepoints; fail-closed cleanup | semantic nesting and fault-injection matrix in `docs/proposals/PLAN_nested_transaction_integrity.md`; ADR-0004; four gates green |
+| **7 — installed-CLI E2E** *(in progress 2026-09-01)* | five independent subprocess journeys; explicit exit-code contract; cross-platform non-editable install | canonical recovery equality; dedicated Ubuntu/Windows CI job; four gates plus E2E green |
 
 **Debt policy:** nothing ships "temporarily" without a register entry
 (`AUDIT_REPORT.md` §8) plus a doc note; every slice ends with the register

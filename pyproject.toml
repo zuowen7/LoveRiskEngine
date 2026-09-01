@@ -60,6 +60,9 @@ packages = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+markers = [
+    "e2e: black-box journeys through a non-editable installed lre executable",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff: lint + format. Replaces flake8 / black / isort with a single tool.

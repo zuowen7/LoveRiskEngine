@@ -586,7 +586,7 @@ def cmd_state_set(args: argparse.Namespace, db: Database) -> None:
     print(t("state_updated", rid=rid))
 
 
-def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
+def cmd_exposure_set(args: argparse.Namespace, db: Database) -> int | None:
     rel = resolve_relationship(db, args.relationship)
     rid = rel.id
     existing = db.get_exposure(rid) or Exposure(rid)
@@ -620,7 +620,7 @@ def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
                     )
                 )
             print(t("cooldown_override_hint", rel=args.relationship))
-            return
+            return 1
     if args.override and new_total > old_total:
         active = _active_cooldowns(db, rid)
         cd_id = active[0].id if active else None
@@ -647,6 +647,7 @@ def cmd_exposure_set(args: argparse.Namespace, db: Database) -> None:
             new=f"{new_total:.1f}",
         )
     )
+    return None
 
 
 def cmd_inconsistency_add(args: argparse.Namespace, db: Database) -> None:
@@ -1348,10 +1349,10 @@ def main(argv: list[str] | None = None) -> int:
             handler = handler[args.sub]
         else:
             assert callable(handler)
-        handler(args, db)
+        result = handler(args, db)
     finally:
         db.close()
-    return 0
+    return result if isinstance(result, int) else 0
 
 
 if __name__ == "__main__":

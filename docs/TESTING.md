@@ -108,12 +108,19 @@ twice in this suite:
 When you add an invariant test, add the meta-guard that proves it fires.
 A guard with no failure path is a comment.
 
-## How CLI tests run
+## Two CLI test layers
 
-House Rule in `CONTRIBUTING.md` "Tests" section: call `main(argv)`
-in-process against `LRE_DB_PATH` in `tmp_path`. Subprocess tests lose
-branch attribution (the coverage belongs to the child process, not the
-suite), which is usually the opposite of why the test was written.
+Command tests call `main(argv)` in-process against `LRE_DB_PATH` in `tmp_path`.
+That preserves branch attribution and gives failures a direct traceback, so it
+remains the default for handler behavior and edge cases.
+
+Installed-CLI E2E tests have a different oracle. They launch the real `lre`
+console script in independent subprocesses and verify process exit codes,
+stdout/stderr, cross-process SQLite state and disaster recovery. They import no
+application module and run outside coverage: child-process execution is not
+attributed to the parent pytest process, and pretending otherwise would dilute
+the coverage map. Five journeys, not hundreds of command permutations, keep
+this layer focused on system composition rather than handler branches.
 
 ## Why the four gates, not just pytest
 

@@ -178,6 +178,7 @@ refuse — that contrast *is* the positioning.
 | Q1 | P3 | Mutation / property testing was "research only" | **Partially delivered** — mutmut extra + hand-written mutation guards + stdlib property tests + meta-guards (2026-09-01 hardening batch); exhaustive mutmut runs remain WSL/CI-only (upstream #397) |
 | C3 | P2 | No auditable surface for record-level self-consistency; alternative-explanation docs overstated CLI enforcement | **Implemented** — two-stage informational `lre consistency`; conditional interpretation→alternative contract; explicit criterion/direction comparison (schema v6) |
 | T1 | P1 | Nested transaction success committed outer work before the outer boundary completed | **Implemented** — explicit outer `BEGIN`, nested SQLite savepoints and full exceptional-path regression matrix; ADR-0004 |
+| Q2 | P1 | No system test crossed the installed console-script, process, and SQLite boundaries | **Implemented** — five independent golden journeys; exact recovery snapshot; Ubuntu/Windows non-editable-install CI |
 
 **No P0 issues found.** The P1s are data-safety items and are the first thing
 the optimization plan discharges.

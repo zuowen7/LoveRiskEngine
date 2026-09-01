@@ -19,12 +19,20 @@ Every push must be green on all four. They run locally in seconds:
 ruff check .          # lint — no findings allowed
 ruff format --check . # formatting — no diffs allowed
 mypy love_risk_engine # types (disallow_untyped_defs = true — must be clean)
-pytest                # all tests pass
+pytest -m "not e2e"   # in-process/unit tests pass
 ```
 
 CI runs the same four on Python 3.11 / 3.12 / 3.13 and fails the build under
 95% coverage (mirrored in `pyproject.toml` as `fail_under`). Pre-commit runs
 them before you can commit, so a red CI should be a rare event.
+
+Packaging, process exits, and cross-process persistence have a separate gate.
+CI installs the project non-editably and runs it on Ubuntu and Windows:
+
+```bash
+python -m pip install --no-deps .
+python -m pytest tests/e2e -m e2e -q
+```
 
 ## House rules
 
@@ -163,9 +171,11 @@ pattern). The rules below are the quick-reference.
   `test_database_integrity.py` is there for that reason.
 - If a test fails, decide which side is wrong before changing either. A failing
   expectation is not automatically a broken implementation.
-- CLI tests call `main(argv)` in-process against `LRE_DB_PATH` in `tmp_path`
-  (see `tests/test_cli_commands.py`). Subprocess tests lose branch attribution,
-  which is usually the reason the test is being written.
+- Handler-level CLI tests call `main(argv)` in-process against `LRE_DB_PATH` in
+  `tmp_path` (see `tests/test_cli_commands.py`) so branch attribution is kept.
+- System-level tests in `tests/e2e/` call only the installed `lre` executable,
+  use no application imports or mocks, and inspect the real temporary SQLite
+  database as an external observer. They deliberately run outside coverage.
 - Some branches are unreachable through `main()` because the data cannot occur —
   `run_hooks` always returns at least one finding, so "no warnings" and "no
   hooks fired" never happen in production. Exercise those as direct unit tests
@@ -180,7 +190,8 @@ states the change; the description states *why*.
 Before requesting review, walk this list:
 
 - [ ] `ruff check .` and `ruff format --check .` are clean
-- [ ] `pytest` passes and you added tests for new behaviour
+- [ ] `pytest -m "not e2e"` passes and you added tests for new behaviour
+- [ ] Installed-CLI E2E passes when packaging, persistence, or CLI contracts change
 - [ ] Coverage did not drop (floor is 95%); read the missing-lines column, not
       the total
 - [ ] If you changed a return type, every caller was checked by hand (rule #7)
