@@ -29,7 +29,7 @@ from .history import ExposureChange
 from .observation import Observation
 from .patterns import detect_love_bombing
 from .profiles import Ordinal, RelationshipProfile
-from .promises import detect_expired_promises
+from .promises import detect_expired_promises, detect_repeated_repromises
 from .state import RelationshipState
 
 
@@ -89,6 +89,13 @@ def run_hooks(ctx: ReviewContext) -> list[BiasFinding]:
 
     if "promise_expiry" in hooks:
         f = detect_expired_promises(ctx.observations, ctx.profile.promise_window_days)
+        if f:
+            findings.append(f)
+
+    if "repeated_repromises" in hooks:
+        f = detect_repeated_repromises(
+            ctx.observations, ctx.profile.promise_window_days
+        )
         if f:
             findings.append(f)
 

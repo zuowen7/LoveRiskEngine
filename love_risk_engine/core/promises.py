@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 
 from .bias_detector import BiasFinding
 from .contradiction import normalize_attribute
@@ -46,6 +47,11 @@ _FUTURE_PATTERN = re.compile(
 # Cap on detailed entries in the finding message; the rest collapse into a count.
 _MAX_DETAILS = 3
 
+# Uncalibrated placeholder (phase 2): N future-directed re-mentions of the
+# same attribute inside the promise window is itself a flag — repeated
+# re-promising is cheap talk in a costly-signal costume.
+REPROMISE_THRESHOLD = 3
+
 
 @dataclass(frozen=True)
 class PromiseClaim:
@@ -61,6 +67,14 @@ class PromiseReport:
     window_days: int | None
     within: list[PromiseClaim]
     expired: list[PromiseClaim]
+
+
+@dataclass(frozen=True)
+class Repromise:
+    attribute: str  # normalized
+    count: int  # future-directed mentions inside the lookback window
+    latest_value: str
+    latest_observation_id: str
 
 
 def is_future_directed(value: str) -> bool:
@@ -149,6 +163,89 @@ def detect_expired_promises(
         "promise_expiry",
         f"{len(expired)} promise claim(s) untouched for > {window_days} days: "
         f"{details}.",
+        severity=2,
+        proposed_decision="WAIT",
+    )
+
+
+def collect_repromises(
+    observations: list[Observation],
+    window_days: int | None,
+    now: str | None = None,
+) -> list[Repromise]:
+    """Count repeated future-directed re-mentions per attribute.
+
+    Only mentions inside the lookback window (`now − window_days`) count; a
+    promise repeated often is cheap talk — the counting itself is the signal.
+    `window_days` None returns [] (defensive; only windowed kinds call it).
+    """
+    if window_days is None:
+        return []
+    now_ts = now or utc_now_iso()
+    now_dt = parse_iso(now_ts)
+    if now_dt is None:
+        return []  # fail open: cannot date anything
+    cutoff = now_dt - timedelta(days=window_days)
+
+    # attribute -> [timestamp, value, observation_id] of future-directed
+    # mentions inside the window, ordered chronologically.
+    mentions: dict[str, list[tuple[str, str, str]]] = {}
+    for o in sorted(observations, key=lambda x: (x.timestamp, x.id)):
+        dt = parse_iso(o.timestamp)
+        if dt is None or dt <= cutoff:
+            continue
+        for c in o.claims:
+            attr = normalize_attribute(c.attribute)
+            value = c.value.strip()
+            if not attr or not value or not is_future_directed(value):
+                continue
+            mentions.setdefault(attr, []).append((o.timestamp, value, o.id))
+
+    repromises = [
+        Repromise(
+            attribute=attr,
+            count=len(rows),
+            latest_value=rows[-1][1],
+            latest_observation_id=rows[-1][2],
+        )
+        for attr, rows in sorted(mentions.items())
+    ]
+    return repromises
+
+
+def detect_repeated_repromises(
+    observations: list[Observation],
+    window_days: int | None,
+    now: str | None = None,
+) -> BiasFinding | None:
+    """Warn (WAIT) when an attribute is re-promised repeatedly.
+
+    Aggregated into one finding; details capped, the rest collapsed into a
+    count. The message states the window, each attribute's count, latest value
+    and observation id — fully auditable.
+    """
+    if window_days is None:
+        return None
+    repromises = [
+        r
+        for r in collect_repromises(observations, window_days, now=now)
+        if r.count >= REPROMISE_THRESHOLD
+    ]
+    if not repromises:
+        return None
+
+    total = sum(r.count for r in repromises)
+    shown = repromises[:_MAX_DETAILS]
+    details = "; ".join(
+        f"{r.attribute} x{r.count} (latest: {r.latest_value!r}, "
+        f"obs {r.latest_observation_id})"
+        for r in shown
+    )
+    if len(repromises) > _MAX_DETAILS:
+        details += f"; +{len(repromises) - _MAX_DETAILS} more"
+    return BiasFinding(
+        "repeated_repromises",
+        f"{total} promise re-mention(s) within {window_days} days: {details}.",
         severity=2,
         proposed_decision="WAIT",
     )

@@ -213,3 +213,32 @@ def test_v2_database_gains_history_tables(tmp_path):
         .fetchall()
     }
     assert {"state_history", "exposure_history"} <= tables
+
+
+def test_v3_database_gains_verification_items(tmp_path):
+    """A database stamped v3 (no verification_items) upgrades to v4."""
+    path = str(tmp_path / "v3.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE relationships ("
+        "id TEXT PRIMARY KEY, alias TEXT NOT NULL, status TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'LOVER');"
+    )
+    conn.execute("PRAGMA user_version = 3")
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    try:
+        db.init()
+    finally:
+        db.close()
+
+    assert _version(path) == SCHEMA_VERSION
+    tables = {
+        r[0]
+        for r in sqlite3.connect(path)
+        .execute("SELECT name FROM sqlite_master WHERE type='table'")
+        .fetchall()
+    }
+    assert "verification_items" in tables

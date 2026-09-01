@@ -1025,6 +1025,172 @@ def test_review_does_not_fire_promise_expiry_for_lover(run, seeded, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# repeated re-promises (phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_review_fires_repeated_repromises_for_mentor(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    for days in (5, 4, 3):
+        _patch_clock(monkeypatch, days)
+        run(
+            "observe",
+            "Alex",
+            "--observation",
+            "promised again",
+            "--claim",
+            "funding=will fund",
+        )
+    out = run("review", "Alex")
+    assert "repeated_repromises" in out
+
+
+def test_review_does_not_fire_repeated_repromises_for_lover(run, seeded, monkeypatch):
+    for days in (5, 4, 3):
+        _patch_clock(monkeypatch, days)
+        run(
+            "observe",
+            "Alex",
+            "--observation",
+            "promised again",
+            "--claim",
+            "funding=will fund",
+        )
+    out = run("review", "Alex")
+    assert "repeated_repromises" not in out
+
+
+# ---------------------------------------------------------------------------
+# counterfactual review (roadmap #2, architecture phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_counterfactual_reports_no_reviews(run, seeded):
+    out = run("counterfactual", "Alex")
+    assert "No reviews recorded" in out
+
+
+def test_counterfactual_lists_reviews(run, seeded):
+    run("review", "Alex")
+    out = run("counterfactual", "Alex")
+    assert "Reviews for R001:" in out
+    assert "RV001" in out
+    assert "Re-run one with" in out
+
+
+def test_counterfactual_reruns_and_reports_match(run, seeded, monkeypatch):
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "old promise",
+        "--claim",
+        "funding=will fund",
+    )
+    review_out = run("review", "Alex")
+    review_id = _first_id(review_out, "RV")
+    out = run("counterfactual", "Alex", "--review", review_id)
+    assert "Counterfactual review of" in out
+    assert "Recomputed with today's rules" in out
+    assert "MATCHED" in out
+
+
+def test_counterfactual_reruns_and_reports_difference(run, seeded, monkeypatch):
+    _patch_clock(monkeypatch, 100)
+    run(
+        "observe",
+        "Alex",
+        "--observation",
+        "old promise",
+        "--claim",
+        "funding=will fund",
+    )
+    review_out = run("review", "Alex")  # LOVER: promise hooks off
+    review_id = _first_id(review_out, "RV")
+    run("relationship", "set", "R001", "--kind", "MENTOR")
+    out = run("counterfactual", "Alex", "--review", review_id)
+    assert "DIFFERENT" in out
+    assert "promise_expiry" in out
+
+
+def test_counterfactual_unknown_review_exits(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("counterfactual", "Alex", "--review", "RV999")
+    assert "not found" in str(exc.value)
+
+
+def test_counterfactual_omits_findings_line_when_empty(run, seeded, monkeypatch):
+    """Unreachable via `main()`: run_hooks always returns >=1 finding."""
+    import love_risk_engine.cli as cli
+    from love_risk_engine.core.counterfactual import FrozenEvidence
+    from love_risk_engine.services.counterfactual import CounterfactualResult
+
+    run("review", "Alex")
+    fake = CounterfactualResult(
+        review_id="RV001",
+        as_of="2026-09-01T00:00:00+00:00",
+        original_recommendation="CONTINUE_OBSERVING",
+        recomputed_recommendation="CONTINUE_OBSERVING",
+        matched=True,
+        fired_rule_ids=(),
+        evidence=FrozenEvidence(
+            "RV001", "2026-09-01T00:00:00+00:00", 0, 0, 0, 0.0, 0.0, 0.0, 0.0, "NEUTRAL"
+        ),
+    )
+    monkeypatch.setattr(cli, "run_counterfactual", lambda db, rid, review_id: fake)
+    out = run("counterfactual", "Alex", "--review", "RV001")
+    assert "findings at that time" not in out
+
+
+# ---------------------------------------------------------------------------
+# mutual verification checklist (roadmap #3, architecture phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_roundtrip_add_list_check_fail(run, seeded):
+    run("verify", "add", "Alex", "--item", "introduced me to their friends")
+    run("verify", "add", "Alex", "--item", "met them at work")
+    out = run("verify", "list", "Alex")
+    assert "[unverified] introduced me to their friends" in out
+    run("verify", "check", "V001")
+    run("verify", "fail", "V002", "--note", "their workplace said no")
+    out = run("verify", "list", "Alex")
+    assert "[verified] introduced me to their friends" in out
+    assert "[failed] met them at work" in out
+
+
+def test_verify_list_reports_empty(run, seeded):
+    out = run("verify", "list", "Alex")
+    assert "No verification items for R001." in out
+
+
+def test_verify_check_unknown_id_exits(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("verify", "check", "V999")
+    assert "not found" in str(exc.value)
+
+
+def test_verify_fail_unknown_id_exits(run, seeded):
+    with pytest.raises(SystemExit) as exc:
+        run("verify", "fail", "V999")
+    assert "not found" in str(exc.value)
+
+
+def test_status_shows_verified_facts_when_present(run, seeded):
+    run("verify", "add", "Alex", "--item", "introduced me to their friends")
+    run("verify", "check", "V001")
+    out = run("status", "Alex")
+    assert "Verified facts: 1 of 1" in out
+
+
+def test_status_omits_verified_facts_when_absent(run, seeded):
+    out = run("status", "Alex")
+    assert "Verified facts" not in out
+
+
+# ---------------------------------------------------------------------------
 # sensitivity direction, boundary seeds, review context (S3)
 # ---------------------------------------------------------------------------
 

@@ -38,3 +38,9 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+      - id: mypy
+        name: mypy (types)
+        entry: mypy love_risk_engine
+        language: system
+        pass_filenames: false
+        types: [python]

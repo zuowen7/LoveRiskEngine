@@ -402,7 +402,9 @@ Implemented: ✅ contradiction tracker, ✅ evidence-support (quality-calibrated
 ✅ timeline view, ✅ local chat import & analysis, ✅ top-conflicts in `status`,
 ✅ relationship kinds & per-kind profiles, ✅ promise expiry, ✅ exit-cost
 sensitivity, ✅ state/exposure change history, ✅ rapid exposure escalation,
-✅ data-home default, ✅ lossless export/restore, ✅ `db check`.
+✅ data-home default, ✅ lossless export/restore, ✅ `db check`,
+✅ re-promise counting, ✅ counterfactual review, ✅ mutual verification
+checklist.
 
 The canonical, reviewed roadmap and target architecture live in
 `docs/ARCHITECTURE_AND_PLAN.md`; the current-state audit (strengths, debt,

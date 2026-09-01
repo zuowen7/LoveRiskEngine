@@ -102,7 +102,7 @@ PROFILES: dict[Kind, RelationshipProfile] = {
     ),
     Kind.BOSS: RelationshipProfile(
         kind=Kind.BOSS,
-        enabled_hooks=_HOOKS_COMMON + ("promise_expiry",),
+        enabled_hooks=_HOOKS_COMMON + ("promise_expiry", "repeated_repromises"),
         promise_window_days=90,
         power_asymmetry=Ordinal.HIGH,
         exit_cost=Ordinal.HIGH,
@@ -114,7 +114,7 @@ PROFILES: dict[Kind, RelationshipProfile] = {
     ),
     Kind.MENTOR: RelationshipProfile(
         kind=Kind.MENTOR,
-        enabled_hooks=_HOOKS_COMMON + ("promise_expiry",),
+        enabled_hooks=_HOOKS_COMMON + ("promise_expiry", "repeated_repromises"),
         promise_window_days=90,
         power_asymmetry=Ordinal.HIGH,
         exit_cost=Ordinal.HIGH,
@@ -126,7 +126,7 @@ PROFILES: dict[Kind, RelationshipProfile] = {
     ),
     Kind.COLLEAGUE: RelationshipProfile(
         kind=Kind.COLLEAGUE,
-        enabled_hooks=_HOOKS_COMMON + ("promise_expiry",),
+        enabled_hooks=_HOOKS_COMMON + ("promise_expiry", "repeated_repromises"),
         promise_window_days=90,
         power_asymmetry=Ordinal.MED,
         exit_cost=Ordinal.MED,

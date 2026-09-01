@@ -28,6 +28,9 @@ Usage:
   lre export <file>                             # lossless backup bundle
   lre restore <file>                            # restore (replaces all data)
   lre db check                                  # integrity checks
+  lre counterfactual <relationship> [--review ID] # audit a past review
+  lre verify add <relationship> --item "..."     # mutual verification checklist
+  lre verify list <relationship>                #   (check/fail change an item's state)
   lre chat import <relationship> --file chat.txt [--rules claim_rules.json]
   lre timeline <relationship>                    # chronological event stream
   lre cooldown <relationship> [list|clear]       # precommitment guardrails
@@ -62,6 +65,7 @@ from .core.signals import SignalType, suggest_signal_type
 from .core.state import EmotionalState, RelationshipState
 from .core.timeline import build_timeline, format_timeline
 from .core.timeutil import utc_now_iso
+from .services.counterfactual import run_counterfactual
 from .services.export import restore_bundle, save_bundle
 from .services.review import analyze, build_context, run_review
 from .storage.database import Database
@@ -191,6 +195,9 @@ def cmd_status(args: argparse.Namespace, db: Database) -> None:
     promises = None
     if ctx.profile.promise_window_days is not None:
         promises = collect_promises(ctx.observations, ctx.profile.promise_window_days)
+    items = db.list_verification_items(rid)
+    verified = sum(1 for i in items if i.status == "verified")
+    verification = (verified, len(items)) if items else None
     print(
         format_status(
             rid,
@@ -206,6 +213,7 @@ def cmd_status(args: argparse.Namespace, db: Database) -> None:
             kind=rel.kind,
             profile=ctx.profile,
             promises=promises,
+            verification=verification,
         )
     )
 
@@ -224,6 +232,7 @@ def format_status(
     kind: str | None = None,
     profile: RelationshipProfile | None = None,
     promises: PromiseReport | None = None,
+    verification: tuple[int, int] | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append(f"Relationship: {rid}")
@@ -270,6 +279,9 @@ def format_status(
             buckets[res] = buckets.get(res, 0) + 1
         parts = ", ".join(f"{v} {k}" for k, v in sorted(buckets.items()))
         lines.append(f"Acknowledged (closed): {len(acknowledged)} ({parts})")
+    if verification is not None:
+        verified, total = verification
+        lines.append(f"Verified facts: {verified} of {total}")
     if contradictions:
         lines.append("")
         lines.append("Conflicting claims (top):")
@@ -639,6 +651,80 @@ def cmd_db_check(_args: argparse.Namespace, db: Database) -> None:
     sys.exit("Database integrity check failed.")
 
 
+def cmd_verify_add(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    vid = db.add_verification_item(rel.id, args.item)
+    print(f"Added verification item {vid} for {rel.id}: {args.item} [unverified]")
+
+
+def cmd_verify_list(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    items = db.list_verification_items(rel.id)
+    if not items:
+        print(f"No verification items for {rel.id}.")
+        return
+    print(f"Verification items for {rel.id}:")
+    for it in items:
+        line = f"  {it.id} [{it.status}] {it.item}"
+        if it.note:
+            line += f" | {it.note}"
+        print(line)
+
+
+def cmd_verify_check(args: argparse.Namespace, db: Database) -> None:
+    if not db.set_verification_status(args.id, "verified"):
+        sys.exit(f"Error: verification item not found: {args.id!r}")
+    print(f"Marked {args.id} as verified.")
+
+
+def cmd_verify_fail(args: argparse.Namespace, db: Database) -> None:
+    if not db.set_verification_status(args.id, "failed", note=args.note):
+        sys.exit(f"Error: verification item not found: {args.id!r}")
+    print(f"Marked {args.id} as failed.")
+
+
+def cmd_counterfactual(args: argparse.Namespace, db: Database) -> None:
+    rel = resolve_relationship(db, args.relationship)
+    reviews = db.list_reviews(rel.id)
+    if not args.review:
+        if not reviews:
+            print(f"No reviews recorded for {rel.id} yet.")
+            return
+        print(f"Reviews for {rel.id}:")
+        for r in reviews:
+            print(f"  {r.id}  {r.timestamp[:16]}  -> {r.recommendation}")
+        print("Re-run one with: lre counterfactual <rel> --review <id>")
+        return
+    try:
+        result = run_counterfactual(db, rel.id, args.review)
+    except ValueError as exc:
+        sys.exit(f"Error: {exc}")
+    ev = result.evidence
+    print(
+        f"Counterfactual review of {result.review_id} "
+        f"({result.as_of[:16]}, original: {result.original_recommendation})"
+    )
+    print(
+        f"Evidence frozen at that time: {ev.observation_count} observation(s), "
+        f"{ev.boundary_hit_count} boundary hit(s), "
+        f"{ev.unresolved_inconsistency_count} unresolved inconsistencies"
+    )
+    print(
+        f"  exposure {ev.exposure_total:.1f} | attraction {ev.attraction:.1f} | "
+        f"trust {ev.trust:.1f} | uncertainty {ev.uncertainty:.1f} | "
+        f"emotional {ev.emotional_state}"
+    )
+    print(f"Recomputed with today's rules: {result.recomputed_recommendation}")
+    if result.fired_rule_ids:
+        print("  findings at that time: " + ", ".join(result.fired_rule_ids))
+    print("Original vs recomputed: " + ("MATCHED" if result.matched else "DIFFERENT"))
+    print(
+        "Note: today's thresholds and profiles are applied to past evidence; "
+        "the rules may have changed since the original decision. This is an "
+        "audit tool, not a verdict on your past self."
+    )
+
+
 def cmd_cooldown(args: argparse.Namespace, db: Database) -> None:
     rel = resolve_relationship(db, args.relationship)
     rid = rel.id
@@ -826,6 +912,30 @@ def build_parser() -> argparse.ArgumentParser:
     pdb_sub = pdb.add_subparsers(dest="sub", required=True)
     pdb_sub.add_parser("check", help="Run integrity checks")
 
+    pcf = sub.add_parser(
+        "counterfactual",
+        help="Re-run a past review against the evidence available at that time",
+    )
+    pcf.add_argument("relationship")
+    pcf.add_argument(
+        "--review",
+        default=None,
+        help="Review id to re-run (default: list reviews)",
+    )
+
+    pv = sub.add_parser("verify", help="Mutual verification checklist")
+    pv_sub = pv.add_subparsers(dest="sub", required=True)
+    pv_add = pv_sub.add_parser("add", help="Add a verifiable fact to confirm")
+    pv_add.add_argument("relationship")
+    pv_add.add_argument("--item", required=True, help="The verifiable fact")
+    pv_list = pv_sub.add_parser("list", help="List verification items")
+    pv_list.add_argument("relationship")
+    pv_check = pv_sub.add_parser("check", help="Mark an item as verified")
+    pv_check.add_argument("id")
+    pv_fail = pv_sub.add_parser("fail", help="Mark an item as failed")
+    pv_fail.add_argument("id")
+    pv_fail.add_argument("--note", default="")
+
     pchat = sub.add_parser("chat", help="Local chat import & analysis (offline)")
     pchat_sub = pchat.add_subparsers(dest="sub", required=True)
     pimp = pchat_sub.add_parser("import", help="Import a local chat export")
@@ -883,6 +993,13 @@ DISPATCH = {
     "export": cmd_export,
     "restore": cmd_restore,
     "db": {"check": cmd_db_check},
+    "counterfactual": cmd_counterfactual,
+    "verify": {
+        "add": cmd_verify_add,
+        "list": cmd_verify_list,
+        "check": cmd_verify_check,
+        "fail": cmd_verify_fail,
+    },
     "chat": {"import": cmd_chat_import},
     "timeline": cmd_timeline,
     "cooldown": cmd_cooldown,

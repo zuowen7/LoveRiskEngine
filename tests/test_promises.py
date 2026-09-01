@@ -10,7 +10,9 @@ from __future__ import annotations
 from love_risk_engine.core.observation import Claim, Observation
 from love_risk_engine.core.promises import (
     collect_promises,
+    collect_repromises,
     detect_expired_promises,
+    detect_repeated_repromises,
     is_future_directed,
 )
 
@@ -153,3 +155,76 @@ def test_detect_expired_promises_none_when_fresh_or_no_window():
     fresh = [_obs("O001", "2026-08-20T00:00:00+00:00", ("funding", "will fund it"))]
     assert detect_expired_promises(fresh, 90, now=NOW) is None
     assert detect_expired_promises(fresh, None, now=NOW) is None
+
+
+# ---------------------------------------------------------------------------
+# repeated re-promises (phase 2: promise re-promise counting)
+# ---------------------------------------------------------------------------
+
+
+def test_collect_repromises_counts_repeated_future_mentions():
+    obs = [
+        _obs("O001", "2026-08-01T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O002", "2026-08-10T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O003", "2026-08-20T00:00:00+00:00", ("funding", "will fund it")),
+    ]
+    repromises = collect_repromises(obs, 90, now=NOW)
+    assert [r.attribute for r in repromises] == ["funding"]
+    assert repromises[0].count == 3
+    assert repromises[0].latest_value == "will fund it"
+    assert repromises[0].latest_observation_id == "O003"
+
+
+def test_collect_repromises_ignores_non_future_mentions():
+    obs = [
+        _obs("O001", "2026-08-01T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O002", "2026-08-10T00:00:00+00:00", ("funding", "was delivered")),
+        _obs("O003", "2026-08-20T00:00:00+00:00", ("funding", "will fund it")),
+    ]
+    repromises = collect_repromises(obs, 90, now=NOW)
+    assert repromises[0].count == 2  # only future-directed mentions count
+
+
+def test_collect_repromises_ignores_mentions_outside_window():
+    obs = [
+        _obs("O001", "2026-04-01T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O002", "2026-04-10T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O003", "2026-04-20T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O004", "2026-08-20T00:00:00+00:00", ("funding", "will fund it")),
+    ]
+    repromises = collect_repromises(obs, 90, now=NOW)
+    assert repromises[0].count == 1  # only in-window mentions count
+
+
+def test_collect_repromises_empty_without_window():
+    obs = [_obs("O001", "2026-08-01T00:00:00+00:00", ("funding", "will fund it"))]
+    assert collect_repromises(obs, None, now=NOW) == []
+
+
+def test_detect_repeated_repromises_fires_wait_with_details():
+    obs = [
+        _obs("O001", "2026-08-01T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O002", "2026-08-10T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O003", "2026-08-20T00:00:00+00:00", ("funding", "will fund it")),
+    ]
+    f = detect_repeated_repromises(obs, 90, now=NOW)
+    assert f is not None
+    assert f.rule_id == "repeated_repromises"
+    assert f.proposed_decision == "WAIT"
+    assert "90" in f.message
+    assert "funding x3" in f.message
+    assert "'will fund it'" in f.message
+    assert "O003" in f.message
+
+
+def test_detect_repeated_repromises_silent_below_threshold():
+    obs = [
+        _obs("O001", "2026-08-01T00:00:00+00:00", ("funding", "will fund it")),
+        _obs("O002", "2026-08-10T00:00:00+00:00", ("funding", "will fund it")),
+    ]
+    assert detect_repeated_repromises(obs, 90, now=NOW) is None
+
+
+def test_detect_repeated_repromises_none_without_window():
+    obs = [_obs("O001", "2026-08-01T00:00:00+00:00", ("funding", "will fund it"))]
+    assert detect_repeated_repromises(obs, None, now=NOW) is None

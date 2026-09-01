@@ -104,10 +104,27 @@ exposure-aware). Local SQLite + CLI only. No scoring, no surveillance.
   log makes visible. Baseline carries forward from the last snapshot at or
   before the window; the finding (PAUSE, severity 3) states window, delta and
   baseline. Universal across all kinds; un-datable rows fail open.
+- **Re-promise counting** (`core/promises.py` `repeated_repromises`, phase 2):
+  an attribute re-promised (future-directed) ≥3 times inside the promise
+  window is itself a flag — repeated re-promising is cheap talk in a
+  costly-signal costume. Windowed kinds only; WAIT, aggregated, auditable.
+- **Counterfactual review / RedTeamMe** (`core/counterfactual.py` +
+  `services/counterfactual.py` + `lre counterfactual`, roadmap #2): re-runs a
+  stored review against the evidence frozen at its timestamp and diffs the
+  verdict — today's rules on past evidence, stated honestly. Also the
+  calibration data generator (user-labeled outcomes, architecture §4).
+- **Mutual verification checklist** (schema v4 `verification_items` +
+  `lre verify add/list/check/fail`, roadmap #3): user-curated verifiable
+  facts in three states (unverified / verified / failed); `status` prints
+  `Verified facts: N of M`. Record + display only — the engine never
+  auto-verifies, and weighting integration is a separate slice.
+- **Data safety (phase 1)**: platform data-home default with legacy CWD
+  fallback; lossless `lre export` / `lre restore` (SHA-256 bundle); `lre db
+  check`; executable network-import guard test (invariant #1).
 
 ## Test results
 
-`pytest` → **248 passed**. Branch coverage **99%**; `cli.py` at **100%**
+`pytest` → **314 passed**. Branch coverage **99%**; `cli.py` at **100%**
 (statement and branch). Coverage floor enforced at **95%** in both
 `pyproject.toml` (`fail_under`) and CI.
 
@@ -223,10 +240,8 @@ Two rules worth internalising, both learned the hard way:
    enables — ~~**rapid exposure escalation**~~ ("exposure grew 3 points in 2
    days while evidence grew 0") — is **also implemented** on top of it
    (`core/escalation.py`, PAUSE, universal across kinds).
-2. **Counterfactual review / RedTeamMe** — re-run a past decision against only the
-   evidence available at that time, to audit whether you would have decided differently
-   (and whether your current self is rationalizing the past).
-3. **Mutual verification checklist** — a structured, user-configurable checklist of
-   verifiable facts (introduced to friends, met at workplace, etc.) whose costly-signal
-   status can be confirmed, sharpening the boundary between cheap talk and verified
-   costly signals.
+2. ~~**Counterfactual review / RedTeamMe**~~ — **implemented**
+   (`lre counterfactual`, frozen-evidence recompute + MATCHED/DIFFERENT diff,
+   current-rules-on-past-evidence stated honestly).
+3. ~~**Mutual verification checklist**~~ — **implemented** (schema v4,
+   `lre verify` group, `Verified facts: N of M` in `status`).

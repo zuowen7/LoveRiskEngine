@@ -161,11 +161,11 @@ refuse — that contrast *is* the positioning.
 |---|---|---|---|
 | D1 | P1 | No export/backup command; DB is a single point of loss | **Implemented** — `lre export`/`restore` (SHA-256 bundle, lossless round-trip tested) |
 | D2 | P1 | Default DB path = CWD; data not discoverable | **Implemented** — platform data dir + legacy CWD fallback + `LRE_DB_PATH` |
-| R1 | P2 | `pyproject.toml` version 0.1.0 stale | versioning policy, next release |
-| R2 | P2 | pre-commit lacks the mypy hook | add to hook config |
+| R1 | P2 | `pyproject.toml` version 0.1.0 stale | **Implemented** — 0.3.0 (phase 2) |
+| R2 | P2 | pre-commit lacks the mypy hook | **Implemented** — mypy hook added (phase 2) |
 | D3 | P2 | No `PRAGMA integrity_check` surface | **Implemented** — `lre db check` (integrity + foreign-key) |
 | D4 | P2 | Config = env vars only | decision fixed in architecture doc |
-| E1 | P2 | Detector thresholds uncalibrated | calibration strategy; never faked |
+| E1 | P2 | Detector thresholds uncalibrated | strategy in `ARCHITECTURE_AND_PLAN.md` §4; **data generator delivered** — counterfactual review (phase 2) |
 | E2 | P3 | Chat import collapses same-second messages | documented limitation, keep visible |
 | E3 | P3 | No shell completion / man page | phase 3 UX polish |
 | S1 | P2 | Roadmap incoherence (old README list) | resolved by `ARCHITECTURE_AND_PLAN.md` |

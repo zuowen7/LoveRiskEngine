@@ -62,6 +62,13 @@ def test_windowed_kinds_enable_promise_expiry():
         assert "promise_expiry" not in PROFILES[kind].enabled_hooks
 
 
+def test_windowed_kinds_enable_repromise_detection():
+    for kind in (Kind.BOSS, Kind.MENTOR, Kind.COLLEAGUE):
+        assert "repeated_repromises" in PROFILES[kind].enabled_hooks
+    for kind in (Kind.LOVER, Kind.FRIEND, Kind.PARENT, Kind.STRANGER):
+        assert "repeated_repromises" not in PROFILES[kind].enabled_hooks
+
+
 def test_approved_ordinal_table():
     assert PROFILES[Kind.LOVER].power_asymmetry is Ordinal.LOW
     assert PROFILES[Kind.LOVER].exit_cost is Ordinal.MED

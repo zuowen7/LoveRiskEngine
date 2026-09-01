@@ -31,6 +31,7 @@ from ..core.relationship import Kind, Relationship
 from ..core.review import Review
 from ..core.signals import SignalType
 from ..core.state import EmotionalState, RelationshipState
+from ..core.verification import VerificationItem, VerificationStatus
 from .schema import SCHEMA, SCHEMA_VERSION, TABLE_ORDER
 
 # SQL identifiers can never be bound as parameters, so we allow-list them.
@@ -45,9 +46,12 @@ _ALLOWED_IDENTIFIERS = {
     ("override_log", "id"),
     ("state_history", "id"),
     ("exposure_history", "id"),
+    ("verification_items", "id"),
 }
 
 _VALID_KINDS = frozenset(k.value for k in Kind)
+
+_VALID_VERIFICATION_STATUSES = frozenset(s.value for s in VerificationStatus)
 
 
 def _validate_kind(kind: str) -> None:
@@ -59,6 +63,12 @@ def _validate_kind(kind: str) -> None:
     """
     if kind not in _VALID_KINDS:
         raise ValueError(f"unknown relationship kind: {kind!r}")
+
+
+def _validate_verification_status(status: str) -> None:
+    """Allow-list verification statuses before they reach the database."""
+    if status not in _VALID_VERIFICATION_STATUSES:
+        raise ValueError(f"unknown verification status: {status!r}")
 
 
 def _now() -> str:
@@ -199,6 +209,8 @@ class Database:
             self._migrate_v1_to_v2()
         if version < 3:
             self._migrate_v2_to_v3()
+        if version < 4:
+            self._migrate_v3_to_v4()
         self._set_user_version(SCHEMA_VERSION)
 
     def _migrate_v0_to_v1(self) -> None:
@@ -291,6 +303,23 @@ class Database:
                 life_decision    REAL NOT NULL,
                 FOREIGN KEY (relationship_id) REFERENCES relationships(id)
             );
+            """
+        )
+
+    def _migrate_v3_to_v4(self) -> None:
+        """Create the verification checklist table (roadmap #3)."""
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS verification_items (
+                id              TEXT PRIMARY KEY,
+                relationship_id  TEXT NOT NULL,
+                item             TEXT NOT NULL,
+                status           TEXT NOT NULL DEFAULT 'unverified',
+                note             TEXT NOT NULL DEFAULT '',
+                created_at       TEXT NOT NULL,
+                verified_at      TEXT,
+                FOREIGN KEY (relationship_id) REFERENCES relationships(id)
+            )
             """
         )
 
@@ -884,6 +913,12 @@ class Database:
             ).fetchall()
         ]
 
+    def get_review(self, review_id: str) -> Review | None:
+        row = self._db.execute(
+            "SELECT * FROM reviews WHERE id=?", (review_id,)
+        ).fetchone()
+        return self._row_to_review(row) if row else None
+
     def _row_to_review(self, r: sqlite3.Row) -> Review:
         hooks = r["triggered_hooks"]
         return Review(
@@ -1044,3 +1079,58 @@ class Database:
             dict(v) for v in self._db.execute("PRAGMA foreign_key_check").fetchall()
         ]
         return (detail == "ok" and not violations, detail, violations)
+
+    # --- verification checklist (roadmap #3) ---
+    def add_verification_item(self, relationship_id: str, item: str) -> str:
+        vid = _next_id(self, "V", "verification_items", "id")
+        self._db.execute(
+            "INSERT INTO verification_items("
+            "id, relationship_id, item, status, note, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                vid,
+                relationship_id,
+                item,
+                VerificationStatus.UNVERIFIED.value,
+                "",
+                _now(),
+            ),
+        )
+        self._commit()
+        return vid
+
+    def set_verification_status(
+        self, item_id: str, status: str, note: str = ""
+    ) -> bool:
+        """Transition an item's status. Returns False if the item is unknown.
+
+        `verified_at` is stamped on every transition out of unverified; items
+        are append-only — status changes, never deletions.
+        """
+        _validate_verification_status(status)
+        cur = self._db.execute(
+            "UPDATE verification_items SET status=?, note=?, verified_at=? WHERE id=?",
+            (status, note, _now(), item_id),
+        )
+        self._commit()
+        return cur.rowcount > 0
+
+    def list_verification_items(self, relationship_id: str) -> list[VerificationItem]:
+        return [
+            self._row_to_verification_item(r)
+            for r in self._db.execute(
+                "SELECT * FROM verification_items WHERE relationship_id=? ORDER BY id",
+                (relationship_id,),
+            ).fetchall()
+        ]
+
+    def _row_to_verification_item(self, r: sqlite3.Row) -> VerificationItem:
+        return VerificationItem(
+            id=r["id"],
+            relationship_id=r["relationship_id"],
+            item=r["item"],
+            status=r["status"],
+            note=r["note"],
+            created_at=r["created_at"],
+            verified_at=r["verified_at"],
+        )
