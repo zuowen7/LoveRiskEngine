@@ -8,6 +8,7 @@ over the data dir — existing data is never orphaned by an upgrade.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import posixpath
 import sys
@@ -22,15 +23,16 @@ def _home() -> str:
 def default_db_path() -> str:
     """Platform data dir / LoveRiskEngine / love_risk.db.
 
-    The POSIX branches use `posixpath` explicitly — identical to `os.path` on
-    those platforms, but deterministic when tested from any host.
+    Each branch joins with its platform's path rules explicitly (`ntpath` /
+    `posixpath` — identical to `os.path` on the matching host) so the result
+    is deterministic when tested from any host.
     """
     if sys.platform == "win32":
         base = (
             os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE") or _home()
         )
-        data_dir = str(Path(base) / "LoveRiskEngine")
-        return str(Path(data_dir) / "love_risk.db")
+        data_dir = ntpath.join(base, "LoveRiskEngine")
+        return ntpath.join(data_dir, "love_risk.db")
     if sys.platform == "darwin":
         data_dir = posixpath.join(
             _home(), "Library", "Application Support", "LoveRiskEngine"
